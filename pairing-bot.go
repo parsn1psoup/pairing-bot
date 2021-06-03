@@ -386,15 +386,17 @@ func (rdb *RecurserDB) match(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// TODO
+	// this is probably not good, just to make this work
+	adb := FirestoreAPIAuthDB{}
+	adb.client = rdb.client
+
 	// message the peeps!
-	// get
-	doc, err := c.client.Collection("apiauth").Doc("key").Get(c.ctx)
+	botPassword, err := adb.GetKey(ctx, "apiauth", "key")
 	if err != nil {
-		log.Panic(err)
+		log.Println("Something weird happened trying to read the auth token from the database")
 	}
-	apikey := doc.Data()
 	botUsername := botEmailAddress
-	botPassword := apikey["value"].(string)
 	zulipClient := &http.Client{}
 
 	// if there's an odd number today, message the last person in the list
@@ -468,6 +470,7 @@ func (c *firestoreClient) endofbatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// message and offboard everyone (delete them from the database)
+
 	doc, err := c.client.Collection("apiauth").Doc("key").Get(c.ctx)
 	if err != nil {
 		log.Panic(err)

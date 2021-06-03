@@ -212,17 +212,17 @@ func (m *MockRecurserDB) UnsetSkippingTomorrow(ctx context.Context, userID strin
 	return Recurser{}, nil
 }
 
-// Zulip Auth Token Lookup
+// Token Lookups
 
 type APIAuthDB interface {
-	GetAPIAuthKey(ctx context.Context) (string, error)
+	GetKey(ctx context.Context, col, doc string) (string, error)
 }
 
 type FirestoreAPIAuthDB struct {
 	client *firestore.Client
 }
 
-func (f *FirestoreAPIAuthDB) GetAPIAuthKey(ctx context.Context) (string, error) {
+func (f *FirestoreAPIAuthDB) GetKey(ctx context.Context, col, doc string) (string, error) {
 	doc, err := f.client.Collection("botauth").Doc("token").Get(ctx)
 	if err != nil {
 		log.Println("Something weird happened trying to read the auth token from the database")
@@ -235,6 +235,6 @@ func (f *FirestoreAPIAuthDB) GetAPIAuthKey(ctx context.Context) (string, error) 
 
 type MockAPIAuthDB struct{}
 
-func (f *MockAPIAuthDB) GetAPIAuthKey(ctx context.Context) (string, error) {
+func (f *MockAPIAuthDB) GetKey(ctx context.Context, col, doc string) (string, error) {
 	return "test", nil
 }
