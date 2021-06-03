@@ -98,7 +98,7 @@ func sanityCheck(c *firestoreClient, w http.ResponseWriter, r *http.Request) (in
 	return userReq, err
 }
 
-func dispatch(rdb *FirestoreRecurserDB, cmd string, cmdArgs []string, userID string, userEmail string, userName string) (string, error) {
+func dispatch(rdb *RecurserDB, cmd string, cmdArgs []string, userID string, userEmail string, userName string) (string, error) {
 	var response string
 	var err error
 
@@ -286,7 +286,7 @@ func dispatch(rdb *FirestoreRecurserDB, cmd string, cmdArgs []string, userID str
 	return response, err
 }
 
-func (rdb *FirestoreRecurserDB) handle(w http.ResponseWriter, r *http.Request) {
+func (rdb *RecurserDB) handle(w http.ResponseWriter, r *http.Request) {
 	responder := json.NewEncoder(w)
 
 	// sanity check the incoming request
@@ -349,7 +349,7 @@ func nope(w http.ResponseWriter, r *http.Request) {
 
 // "match" makes matches for pairing, and messages those people to notify them of their match
 // it runs once per day at 8am (it's triggered with app engine's cron service)
-func (c *firestoreClient) match(w http.ResponseWriter, r *http.Request) {
+func (rdb *RecurserDB) match(w http.ResponseWriter, r *http.Request) {
 	// Check that the request is originating from within app engine
 	// https://cloud.google.com/appengine/docs/flexible/go/scheduling-jobs-with-cron-yaml#validating_cron_requests
 	if r.Header.Get("X-Appengine-Cron") != "true" {
@@ -357,47 +357,23 @@ func (c *firestoreClient) match(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var recursersList []map[string]interface{}
-	var skippersList []map[string]interface{}
-	// this gets the time from system time, which is UTC
-	// on app engine (and most other places). This works
-	// fine for us in NYC, but might not if pairing bot
-	// were ever running in another time zone
-	today := strings.ToLower(time.Now().Weekday().String())
+	ctx := context.Background()
 
-	// ok this is how we have to get all the recursers. it's weird.
-	// this query returns an iterator, and then we have to use firestore
-	// magic to iterate across the results of the query and store them
-	// into our 'recursersList' variable which is a slice of map[string]interface{}
-	iter := c.client.Collection("recursers").Where("isSkippingTomorrow", "==", false).Where("schedule."+today, "==", true).Documents(c.ctx)
-	for {
-		doc, err := iter.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			log.Panic(err)
-		}
-		recursersList = append(recursersList, doc.Data())
-	}
+	// TODO handle err / empty list?
+	recursersList, err := ListPairingTomorrow(ctx)
+
+	ctx = context.Background()
+
+	skippersList, err := ListSkippingTomorrow(ctx)
 
 	// get everyone who was set to skip today and set them back to isSkippingTomorrow = false
-	iter = c.client.Collection("recursers").Where("isSkippingTomorrow", "==", true).Documents(c.ctx)
-	for {
-		doc, err := iter.Next()
-		if err == iterator.Done {
-			break
-		}
+
+	ctx = context.Background()
+
+	for _, skipper := range skippersList {
+		err := rdb.UnsetSkippingTomorrow(ctx, skipper)
 		if err != nil {
 			log.Panic(err)
-		}
-		skippersList = append(skippersList, doc.Data())
-	}
-	for i := range skippersList {
-		skippersList[i]["isSkippingTomorrow"] = false
-		_, err := c.client.Collection("recursers").Doc(skippersList[i]["id"].(string)).Set(c.ctx, skippersList[i], firestore.MergeAll)
-		if err != nil {
-			log.Println(err)
 		}
 	}
 
@@ -411,6 +387,7 @@ func (c *firestoreClient) match(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// message the peeps!
+	// get
 	doc, err := c.client.Collection("apiauth").Doc("key").Get(c.ctx)
 	if err != nil {
 		log.Panic(err)
@@ -552,10 +529,21 @@ func subscriberCount(c *firestoreClient) int {
 	return count
 }
 
+// // this shuffles our recursers.
+// func shuffle(slice []map[string]interface{}) []map[string]interface{} {
+// 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+// 	ret := make([]map[string]interface{}, len(slice))
+// 	perm := r.Perm(len(slice))
+// 	for i, randIndex := range perm {
+// 		ret[i] = slice[randIndex]
+// 	}
+// 	return ret
+// }
+
 // this shuffles our recursers.
-func shuffle(slice []map[string]interface{}) []map[string]interface{} {
+func shuffle(slice []Recurser) []Recurser {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	ret := make([]map[string]interface{}, len(slice))
+	ret := make([]Recurser, len(slice))
 	perm := r.Perm(len(slice))
 	for i, randIndex := range perm {
 		ret[i] = slice[randIndex]

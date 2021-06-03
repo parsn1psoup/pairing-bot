@@ -7,6 +7,25 @@ import (
 	"cloud.google.com/go/firestore"
 )
 
+type Recurser struct {
+	id                 string
+	name               string
+	email              string
+	isSkippingTomorrow bool
+	schedule           map[string]interface{}
+	isSubscribed       bool
+}
+
+func MapToStruct(m map[string]interface{}) Recurser {
+	// isSubscribed is missing here because it's not in the map
+	return Recurser{id: m["id"],
+		name:               m["name"],
+		email:              m["email"],
+		isSkippingTomorrow: m["isSkippingTomorrow"],
+		schedule:           m["schedule"],
+	}
+}
+
 // this is what we send to / receive from Firestore
 // var recurser = map[string]interface{}{
 // 	"id":                 "string",
@@ -24,15 +43,6 @@ import (
 // 	},
 // }
 
-type Recurser struct {
-	id                 string
-	name               string
-	email              string
-	isSkippingTomorrow bool
-	schedule           map[string]interface{}
-	isSubscribed       bool
-}
-
 // Subscriber List Lookup
 
 type RecurserDB interface {
@@ -42,7 +52,7 @@ type RecurserDB interface {
 	ListPairingTomorrow(ctx context.Context) ([]Recurser, error)
 	ListSkippingTomorrow(ctx context.Context) ([]Recurser, error)
 	SetSkippingTomorrow(ctx context.Context, userID string) error
-	UnsetSkippingTomorrow(ctx context.Context, userID string) error
+	UnsetSkippingTomorrow(ctx context.Context, recurser Recurser) error
 }
 
 type FirestoreRecurserDB struct {
@@ -79,16 +89,6 @@ func (f *FirestoreRecurserDB) GetByUserID(ctx context.Context, userID, userEmail
 	return r, nil
 }
 
-func MapToStruct(m map[string]interface{}) Recurser {
-	// isSubscribed is missing here because it's not in the map
-	return Recurser{id: m["id"],
-		name:               m["name"],
-		email:              m["email"],
-		isSkippingTomorrow: m["isSkippingTomorrow"],
-		schedule:           m["schedule"],
-	}
-}
-
 func (f *FirestoreRecurserDB) Set(ctx context.Context, userID string, recurser Recurser) error {
 
 	r := recurser.ConvertToMap()
@@ -103,18 +103,72 @@ func (f *FirestoreRecurserDB) Delete(ctx context.Context, userID string) error {
 }
 
 func (f *FirestoreRecurserDB) ListPairingTomorrow(ctx context.Context) ([]Recurser, error) {
-	return nil, nil
+	// this gets the time from system time, which is UTC
+	// on app engine (and most other places). This works
+	// fine for us in NYC, but might not if pairing bot
+	// were ever running in another time zone
+	today := strings.ToLower(time.Now().Weekday().String())
+
+	var recursersList []Recurser
+	var r Recurser
+
+	// ok this is how we have to get all the recursers. it's weird.
+	// this query returns an iterator, and then we have to use firestore
+	// magic to iterate across the results of the query and store them
+	// into our 'recursersList' variable which is a slice of map[string]interface{}
+	iter := f.client.Collection("recursers").Where("isSkippingTomorrow", "==", false).Where("schedule."+today, "==", true).Documents(ctx)
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		r = MapToStruct(doc.Data())
+
+		recursersList = append(recursersList, r)
+	}
+
+	return recursersList, nil
 }
 
 func (f *FirestoreRecurserDB) ListSkippingTomorrow(ctx context.Context) ([]Recurser, error) {
-	return nil, nil
+
+	var skippersList []Recurser
+	var r Recurser
+
+	iter = f.client.Collection("recursers").Where("isSkippingTomorrow", "==", true).Documents(ctx)
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		r = MapToStruct(doc.Data())
+
+		skippersList = append(skippersList, r)
+	}
+	return skippersList, nil
 }
 
 func (f *FirestoreRecurserDB) SetSkippingTomorrow(ctx context.Context, userID string) error {
 	return nil
 }
 
-func (f *FirestoreRecurserDB) UnsetSkippingTomorrow(ctx context.Context, userID string) error {
+func (f *FirestoreRecurserDB) UnsetSkippingTomorrow(ctx context.Context, recurser Recurser) error {
+
+	r := MapToStruct(recurser)
+	r["isSkippingTomorrow"] = false
+
+	_, err := f.client.Collection("recursers").Doc(r["id"].(string)).Set(ctx, r, firestore.MergeAll)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
