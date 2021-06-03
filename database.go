@@ -157,7 +157,7 @@ func (f *FirestoreRecurserDB) ListSkippingTomorrow(ctx context.Context) ([]Recur
 }
 
 func (f *FirestoreRecurserDB) SetSkippingTomorrow(ctx context.Context, userID string) error {
-	return nil
+	return nil // TODO
 }
 
 func (f *FirestoreRecurserDB) UnsetSkippingTomorrow(ctx context.Context, recurser Recurser) error {
@@ -223,7 +223,7 @@ type FirestoreAPIAuthDB struct {
 }
 
 func (f *FirestoreAPIAuthDB) GetKey(ctx context.Context, col, doc string) (string, error) {
-	doc, err := f.client.Collection("botauth").Doc("token").Get(ctx)
+	doc, err := f.client.Collection(col).Doc(doc).Get(ctx)
 	if err != nil {
 		log.Println("Something weird happened trying to read the auth token from the database")
 		return "", err

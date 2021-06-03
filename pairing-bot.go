@@ -72,6 +72,7 @@ func (e parsingErr) Error() string {
 	return fmt.Sprintf("Error when parsing command: %s", e.msg)
 }
 
+// TODO this still takes a firestoreClient
 func sanityCheck(c *firestoreClient, w http.ResponseWriter, r *http.Request) (incomingJSON, error) {
 	var userReq incomingJSON
 	// Look at the incoming webhook and slurp up the JSON
@@ -85,13 +86,20 @@ func sanityCheck(c *firestoreClient, w http.ResponseWriter, r *http.Request) (in
 	// validate our zulip-bot token
 	// this was manually put into the database before deployment
 
-	//////// TODO this method needs to be called on an APIAuthDB, not RecurserDB
-	apiKey, err := c.apiAuthDB.GetAPIAuthKey(r.Context())
+	// TODO
+	// this is probably not good, just to make this work
+	adb := FirestoreAPIAuthDB{}
+	adb.client = rdb.client
+
+	ctx := context.Background()
+
+	botAuth, err := adb.GetKey(ctx, "botauth", "token")
+
 	if err != nil {
 		log.Println("Something weird happened trying to read the auth token from the database")
 		return userReq, err
 	}
-	if userReq.Token != apiKey {
+	if userReq.Token != botAuth {
 		http.NotFound(w, r)
 		return userReq, errors.New("unauthorized interaction attempt")
 	}
@@ -291,7 +299,7 @@ func (rdb *RecurserDB) handle(w http.ResponseWriter, r *http.Request) {
 
 	// sanity check the incoming request
 	// we only sanity check requests for handle / webhooks, i.e. user input
-	userReq, err := sanityCheck(c, w, r)
+	userReq, err := sanityCheck(rdb.c, w, r)
 	if err != nil {
 		log.Println(err)
 		return
@@ -446,7 +454,7 @@ func (rdb *RecurserDB) match(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (c *firestoreClient) endofbatch(w http.ResponseWriter, r *http.Request) {
+func (rdb *RecurserDB) endofbatch(w http.ResponseWriter, r *http.Request) {
 	// Check that the request is originating from within app engine
 	// https://cloud.google.com/appengine/docs/flexible/go/scheduling-jobs-with-cron-yaml#validating_cron_requests
 	if r.Header.Get("X-Appengine-Cron") != "true" {
@@ -471,13 +479,18 @@ func (c *firestoreClient) endofbatch(w http.ResponseWriter, r *http.Request) {
 
 	// message and offboard everyone (delete them from the database)
 
-	doc, err := c.client.Collection("apiauth").Doc("key").Get(c.ctx)
+	// TODO
+	// this is probably not good, just to make this work
+	adb := FirestoreAPIAuthDB{}
+	adb.client = rdb.client
+
+	ctx := context.Background()
+
+	botPassword, err := adb.GetKey(ctx, "apiauth", "key")
 	if err != nil {
-		log.Panic(err)
+		log.Println("Something weird happened trying to read the auth token from the database")
 	}
-	apikey := doc.Data()
 	botUsername := botEmailAddress
-	botPassword := apikey["value"].(string)
 	zulipClient := &http.Client{}
 
 	for i := 0; i < len(recursersList); i++ {
