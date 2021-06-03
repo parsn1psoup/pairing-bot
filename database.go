@@ -3,8 +3,13 @@ package main
 import (
 	"context"
 	"log"
+	"strings"
+	"time"
 
 	"cloud.google.com/go/firestore"
+	"google.golang.org/api/iterator"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 )
 
 type Recurser struct {
@@ -16,13 +21,23 @@ type Recurser struct {
 	isSubscribed       bool
 }
 
+func (r *Recurser) ConvertToMap() map[string]interface{} {
+	return map[string]interface{}{
+		"id":                 r.id,
+		"name":               r.name,
+		"email":              r.email,
+		"isSkippingTomorrow": r.isSkippingTomorrow,
+		"schedule":           r.schedule,
+	}
+}
+
 func MapToStruct(m map[string]interface{}) Recurser {
 	// isSubscribed is missing here because it's not in the map
-	return Recurser{id: m["id"],
-		name:               m["name"],
-		email:              m["email"],
-		isSkippingTomorrow: m["isSkippingTomorrow"],
-		schedule:           m["schedule"],
+	return Recurser{id: m["id"].(string),
+		name:               m["name"].(string),
+		email:              m["email"].(string),
+		isSkippingTomorrow: m["isSkippingTomorrow"].(bool),
+		schedule:           m["schedule"].(map[string]interface{}),
 	}
 }
 
@@ -47,11 +62,11 @@ func MapToStruct(m map[string]interface{}) Recurser {
 
 type RecurserDB interface {
 	GetByUserID(ctx context.Context, userID string) (Recurser, error)
+	GetAllUsers(ctx context.Context) ([]Recurser, error)
 	Set(ctx context.Context, userID string, recurser Recurser) error
 	Delete(ctx context.Context, userID string) error
 	ListPairingTomorrow(ctx context.Context) ([]Recurser, error)
 	ListSkippingTomorrow(ctx context.Context) ([]Recurser, error)
-	SetSkippingTomorrow(ctx context.Context, userID string) error
 	UnsetSkippingTomorrow(ctx context.Context, recurser Recurser) error
 }
 
@@ -89,16 +104,37 @@ func (f *FirestoreRecurserDB) GetByUserID(ctx context.Context, userID, userEmail
 	return r, nil
 }
 
+func (f *FirestoreRecurserDB) GetAllUsers(ctx context.Context) ([]Recurser, error) {
+
+	var recursersList []Recurser
+	var r Recurser
+
+	iter := f.client.Collection("recursers").Documents(ctx)
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		r = MapToStruct(doc.Data())
+
+		recursersList = append(recursersList, r)
+	}
+	return recursersList, nil
+}
+
 func (f *FirestoreRecurserDB) Set(ctx context.Context, userID string, recurser Recurser) error {
 
 	r := recurser.ConvertToMap()
-	_, err = f.client.Collection("recursers").Doc(userID).Set(ctx, r, firestore.MergeAll)
+	_, err := f.client.Collection("recursers").Doc(userID).Set(ctx, r, firestore.MergeAll)
 	return err
 
 }
 
 func (f *FirestoreRecurserDB) Delete(ctx context.Context, userID string) error {
-	_, err = f.client.Collection("recursers").Doc(userID).Delete(ctx)
+	_, err := f.client.Collection("recursers").Doc(userID).Delete(ctx)
 	return err
 }
 
@@ -139,7 +175,7 @@ func (f *FirestoreRecurserDB) ListSkippingTomorrow(ctx context.Context) ([]Recur
 	var skippersList []Recurser
 	var r Recurser
 
-	iter = f.client.Collection("recursers").Where("isSkippingTomorrow", "==", true).Documents(ctx)
+	iter := f.client.Collection("recursers").Where("isSkippingTomorrow", "==", true).Documents(ctx)
 	for {
 		doc, err := iter.Next()
 		if err == iterator.Done {
@@ -156,13 +192,9 @@ func (f *FirestoreRecurserDB) ListSkippingTomorrow(ctx context.Context) ([]Recur
 	return skippersList, nil
 }
 
-func (f *FirestoreRecurserDB) SetSkippingTomorrow(ctx context.Context, userID string) error {
-	return nil // TODO
-}
-
 func (f *FirestoreRecurserDB) UnsetSkippingTomorrow(ctx context.Context, recurser Recurser) error {
 
-	r := MapToStruct(recurser)
+	r := recurser.ConvertToMap()
 	r["isSkippingTomorrow"] = false
 
 	_, err := f.client.Collection("recursers").Doc(r["id"].(string)).Set(ctx, r, firestore.MergeAll)
@@ -172,44 +204,34 @@ func (f *FirestoreRecurserDB) UnsetSkippingTomorrow(ctx context.Context, recurse
 	return nil
 }
 
-func (r *Recurser) ConvertToMap() map[string]interface{} {
-	return map[string]interface{}{
-		"id":                 r.id,
-		"name":               r.name,
-		"email":              r.email,
-		"isSkippingTomorrow": r.isSkippingTomorrow,
-		"schedule":           r.schedule,
-	}
-}
-
 type MockRecurserDB struct{}
 
 func (m *MockRecurserDB) GetByUserID(ctx context.Context, userID string) (Recurser, error) {
 	return Recurser{}, nil
 }
 
+func (m *MockRecurserDB) GetAllUsers(ctx context.Context) ([]Recurser, error) {
+	return nil, nil
+}
+
 func (m *MockRecurserDB) Set(ctx context.Context, userID string, recurser Recurser) error {
-	return Recurser{}, nil
+	return nil
 }
 
 func (m *MockRecurserDB) Delete(ctx context.Context, userID string) error {
-	return Recurser{}, nil
+	return nil
 }
 
 func (m *MockRecurserDB) ListPairingTomorrow(ctx context.Context) ([]Recurser, error) {
-	return Recurser{}, nil
+	return nil, nil
 }
 
 func (m *MockRecurserDB) ListSkippingTomorrow(ctx context.Context) ([]Recurser, error) {
-	return Recurser{}, nil
-}
-
-func (m *MockRecurserDB) SetSkippingTomorrow(ctx context.Context, userID string) error {
-	return Recurser{}, nil
+	return nil, nil
 }
 
 func (m *MockRecurserDB) UnsetSkippingTomorrow(ctx context.Context, userID string) error {
-	return Recurser{}, nil
+	return nil
 }
 
 // Token Lookups
@@ -223,13 +245,13 @@ type FirestoreAPIAuthDB struct {
 }
 
 func (f *FirestoreAPIAuthDB) GetKey(ctx context.Context, col, doc string) (string, error) {
-	doc, err := f.client.Collection(col).Doc(doc).Get(ctx)
+	res, err := f.client.Collection(col).Doc(doc).Get(ctx)
 	if err != nil {
 		log.Println("Something weird happened trying to read the auth token from the database")
 		return "", err
 	}
 
-	token := doc.Data()
+	token := res.Data()
 	return token["value"].(string), nil
 }
 

@@ -15,9 +15,6 @@ import (
 	"time"
 
 	"cloud.google.com/go/firestore"
-	"google.golang.org/api/iterator"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 )
 
 const owner string = `@_**Maren Beam (SP2'19)**`
@@ -73,7 +70,7 @@ func (e parsingErr) Error() string {
 }
 
 // TODO this still takes a firestoreClient
-func sanityCheck(c *firestoreClient, w http.ResponseWriter, r *http.Request) (incomingJSON, error) {
+func sanityCheck(c *firestore.Client, w http.ResponseWriter, r *http.Request) (incomingJSON, error) {
 	var userReq incomingJSON
 	// Look at the incoming webhook and slurp up the JSON
 	// Error if the JSON from Zulip istelf is bad
@@ -89,7 +86,7 @@ func sanityCheck(c *firestoreClient, w http.ResponseWriter, r *http.Request) (in
 	// TODO
 	// this is probably not good, just to make this work
 	adb := FirestoreAPIAuthDB{}
-	adb.client = rdb.client
+	adb.client = c
 
 	ctx := context.Background()
 
@@ -106,7 +103,7 @@ func sanityCheck(c *firestoreClient, w http.ResponseWriter, r *http.Request) (in
 	return userReq, err
 }
 
-func dispatch(rdb *RecurserDB, cmd string, cmdArgs []string, userID string, userEmail string, userName string) (string, error) {
+func dispatch(rdb *FirestoreRecurserDB, cmd string, cmdArgs []string, userID string, userEmail string, userName string) (string, error) {
 	var response string
 	var err error
 
@@ -266,7 +263,7 @@ func dispatch(rdb *RecurserDB, cmd string, cmdArgs []string, userID string, user
 		for _, day := range daysList {
 			// this line is a little wild, sorry. it looks so weird because we
 			// have to do type assertion on both interface types
-			if rec.schedule.(map[string]interface{})[strings.ToLower(day)].(bool) {
+			if rec.schedule[strings.ToLower(day)].(bool) {
 				schedule = append(schedule, day)
 			}
 		}
@@ -286,7 +283,7 @@ func dispatch(rdb *RecurserDB, cmd string, cmdArgs []string, userID string, user
 	case "help":
 		response = helpMessage
 	case "count":
-		response = fmt.Sprintf("There are currently %v users subscribed to Pairing Bot.", subscriberCount(c))
+		response = fmt.Sprintf("There are currently %v users subscribed to Pairing Bot.", subscriberCount(rdb))
 	default:
 		// this won't execute because all input has been sanitized
 		// by parseCmd() and all cases are handled explicitly above
@@ -294,12 +291,12 @@ func dispatch(rdb *RecurserDB, cmd string, cmdArgs []string, userID string, user
 	return response, err
 }
 
-func (rdb *RecurserDB) handle(w http.ResponseWriter, r *http.Request) {
+func (rdb *FirestoreRecurserDB) handle(w http.ResponseWriter, r *http.Request) {
 	responder := json.NewEncoder(w)
 
 	// sanity check the incoming request
 	// we only sanity check requests for handle / webhooks, i.e. user input
-	userReq, err := sanityCheck(rdb.c, w, r)
+	userReq, err := sanityCheck(rdb.client, w, r)
 	if err != nil {
 		log.Println(err)
 		return
@@ -341,7 +338,7 @@ func (rdb *RecurserDB) handle(w http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 	}
 	// the tofu and potatoes right here y'all
-	response, err := dispatch(c, cmd, cmdArgs, strconv.Itoa(userReq.Message.SenderID), userReq.Message.SenderEmail, userReq.Message.SenderFullName)
+	response, err := dispatch(rdb, cmd, cmdArgs, strconv.Itoa(userReq.Message.SenderID), userReq.Message.SenderEmail, userReq.Message.SenderFullName)
 	if err != nil {
 		log.Println(err)
 	}
@@ -357,7 +354,7 @@ func nope(w http.ResponseWriter, r *http.Request) {
 
 // "match" makes matches for pairing, and messages those people to notify them of their match
 // it runs once per day at 8am (it's triggered with app engine's cron service)
-func (rdb *RecurserDB) match(w http.ResponseWriter, r *http.Request) {
+func (rdb *FirestoreRecurserDB) match(w http.ResponseWriter, r *http.Request) {
 	// Check that the request is originating from within app engine
 	// https://cloud.google.com/appengine/docs/flexible/go/scheduling-jobs-with-cron-yaml#validating_cron_requests
 	if r.Header.Get("X-Appengine-Cron") != "true" {
@@ -368,11 +365,11 @@ func (rdb *RecurserDB) match(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 
 	// TODO handle err / empty list?
-	recursersList, err := ListPairingTomorrow(ctx)
+	recursersList, err := rdb.ListPairingTomorrow(ctx)
 
 	ctx = context.Background()
 
-	skippersList, err := ListSkippingTomorrow(ctx)
+	skippersList, err := rdb.ListSkippingTomorrow(ctx)
 
 	// get everyone who was set to skip today and set them back to isSkippingTomorrow = false
 
@@ -415,7 +412,7 @@ func (rdb *RecurserDB) match(w http.ResponseWriter, r *http.Request) {
 		log.Println("Someone was the odd-one-out today")
 		messageRequest := url.Values{}
 		messageRequest.Add("type", "private")
-		messageRequest.Add("to", recurser["email"].(string))
+		messageRequest.Add("to", recurser.email)
 		messageRequest.Add("content", oddOneOutMessage)
 		req, err := http.NewRequest("POST", zulipAPIURL, strings.NewReader(messageRequest.Encode()))
 		req.SetBasicAuth(botUsername, botPassword)
@@ -435,7 +432,7 @@ func (rdb *RecurserDB) match(w http.ResponseWriter, r *http.Request) {
 	for i := 0; i < len(recursersList); i += 2 {
 		messageRequest := url.Values{}
 		messageRequest.Add("type", "private")
-		messageRequest.Add("to", recursersList[i]["email"].(string)+", "+recursersList[i+1]["email"].(string))
+		messageRequest.Add("to", recursersList[i].email+", "+recursersList[i+1].email)
 		messageRequest.Add("content", matchedMessage)
 		req, err := http.NewRequest("POST", zulipAPIURL, strings.NewReader(messageRequest.Encode()))
 		req.SetBasicAuth(botUsername, botPassword)
@@ -450,11 +447,11 @@ func (rdb *RecurserDB) match(w http.ResponseWriter, r *http.Request) {
 			log.Println(err)
 		}
 		log.Println(string(respBodyText))
-		log.Println(recursersList[i]["email"].(string), "was", "matched", "with", recursersList[i+1]["email"].(string))
+		log.Println(recursersList[i].email, "was", "matched", "with", recursersList[i+1].email)
 	}
 }
 
-func (rdb *RecurserDB) endofbatch(w http.ResponseWriter, r *http.Request) {
+func (rdb *FirestoreRecurserDB) endofbatch(w http.ResponseWriter, r *http.Request) {
 	// Check that the request is originating from within app engine
 	// https://cloud.google.com/appengine/docs/flexible/go/scheduling-jobs-with-cron-yaml#validating_cron_requests
 	if r.Header.Get("X-Appengine-Cron") != "true" {
@@ -462,19 +459,12 @@ func (rdb *RecurserDB) endofbatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var recursersList []map[string]interface{}
-
 	// getting all the recursers
-	iter := c.client.Collection("recursers").Documents(c.ctx)
-	for {
-		doc, err := iter.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			log.Panic(err)
-		}
-		recursersList = append(recursersList, doc.Data())
+	ctx := context.Background()
+	recursersList, err := rdb.GetAllUsers(ctx)
+
+	if err != nil {
+		log.Panic(err)
 	}
 
 	// message and offboard everyone (delete them from the database)
@@ -484,7 +474,7 @@ func (rdb *RecurserDB) endofbatch(w http.ResponseWriter, r *http.Request) {
 	adb := FirestoreAPIAuthDB{}
 	adb.client = rdb.client
 
-	ctx := context.Background()
+	ctx = context.Background()
 
 	botPassword, err := adb.GetKey(ctx, "apiauth", "key")
 	if err != nil {
@@ -493,13 +483,15 @@ func (rdb *RecurserDB) endofbatch(w http.ResponseWriter, r *http.Request) {
 	botUsername := botEmailAddress
 	zulipClient := &http.Client{}
 
+	ctx = context.Background() // TODO my use of contexts is definitely wrong
+
 	for i := 0; i < len(recursersList); i++ {
-		recurserID := recursersList[i]["id"].(string)
-		recurserEmail := recursersList[i]["email"].(string)
+		recurserID := recursersList[i].id
+		recurserEmail := recursersList[i].email
 		messageRequest := url.Values{}
 		var message string
 
-		_, err = c.client.Collection("recursers").Doc(recurserID).Delete(c.ctx)
+		err = rdb.Delete(ctx, recurserID)
 		if err != nil {
 			log.Println(err)
 			message = fmt.Sprintf("Uh oh, I was trying to offboard you since it's the end of batch, but something went wrong. Consider messaging %v to let them know this happened.", owner)
@@ -527,34 +519,20 @@ func (rdb *RecurserDB) endofbatch(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func subscriberCount(c *firestoreClient) int {
+func subscriberCount(rdb *FirestoreRecurserDB) int {
 
 	// getting all the recursers, but only to count them
-	count := 0
-	iter := c.client.Collection("recursers").Documents(c.ctx)
-	for {
-		_, err := iter.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			log.Panic(err)
-		}
-		count += 1
+
+	ctx := context.Background()
+	recursersList, err := rdb.GetAllUsers(ctx)
+
+	if err != nil {
+		log.Panic(err)
 	}
-	return count
+
+	return len(recursersList)
 }
 
-// // this shuffles our recursers.
-// func shuffle(slice []map[string]interface{}) []map[string]interface{} {
-// 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-// 	ret := make([]map[string]interface{}, len(slice))
-// 	perm := r.Perm(len(slice))
-// 	for i, randIndex := range perm {
-// 		ret[i] = slice[randIndex]
-// 	}
-// 	return ret
-// }
 
 // this shuffles our recursers.
 func shuffle(slice []Recurser) []Recurser {
