@@ -7,7 +7,11 @@ import (
 	"cloud.google.com/go/firestore"
 )
 
-type Recurser map[string]interface{} // TODO: actual struct with fields
+// a map is what we get back from firebase?
+// TODO: actual struct with fields
+type Recurser map[string]interface{}
+
+// Subscriber List Lookup
 
 type RecurserDB interface {
 	GetByUserID(ctx context.Context, userID string) (Recurser, error)
@@ -16,6 +20,7 @@ type RecurserDB interface {
 	ListPairingTomorrow(ctx context.Context) ([]Recurser, error)
 	ListSkippingTomorrow(ctx context.Context) ([]Recurser, error)
 	SetSkippingTomorrow(ctx context.Context, userID string) error
+	UnsetSkippingTomorrow(ctx context.Context, userID string) error
 }
 
 type FirestoreRecurserDB struct {
@@ -46,6 +51,42 @@ func (f *FirestoreRecurserDB) SetSkippingTomorrow(ctx context.Context, userID st
 	return nil
 }
 
+func (f *FirestoreRecurserDB) UnsetSkippingTomorrow(ctx context.Context, userID string) error {
+	return nil
+}
+
+type MockRecurserDB struct{}
+
+func (m *MockRecurserDB) GetByUserID(ctx context.Context, userID string) (Recurser, error) {
+	return Recurser{}, nil
+}
+
+func (m *MockRecurserDB) Set(ctx context.Context, userID string, recurser Recurser) error {
+	return Recurser{}, nil
+}
+
+func (m *MockRecurserDB) Delete(ctx context.Context, userID string) error {
+	return Recurser{}, nil
+}
+
+func (m *MockRecurserDB) ListPairingTomorrow(ctx context.Context) ([]Recurser, error) {
+	return Recurser{}, nil
+}
+
+func (m *MockRecurserDB) ListSkippingTomorrow(ctx context.Context) ([]Recurser, error) {
+	return Recurser{}, nil
+}
+
+func (m *MockRecurserDB) SetSkippingTomorrow(ctx context.Context, userID string) error {
+	return Recurser{}, nil
+}
+
+func (m *MockRecurserDB) UnsetSkippingTomorrow(ctx context.Context, userID string) error {
+	return Recurser{}, nil
+}
+
+// Zulip Auth Token Lookup
+
 type APIAuthDB interface {
 	GetAPIAuthKey(ctx context.Context) (string, error)
 }
@@ -63,4 +104,10 @@ func (f *FirestoreAPIAuthDB) GetAPIAuthKey(ctx context.Context) (string, error) 
 
 	token := doc.Data()
 	return token["value"].(string), nil
+}
+
+type MockAPIAuthDB struct{}
+
+func (f *MockAPIAuthDB) GetAPIAuthKey(ctx context.Context) (string, error) {
+	return "test", nil
 }
