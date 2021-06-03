@@ -15,24 +15,21 @@ func main() {
 
 	// setting up database connection
 	ctx := context.Background()
+
 	client, err := firestore.NewClient(ctx, "pairing-bot-284823")
 	if err != nil {
 		log.Panic(err)
 	}
 	defer client.Close()
 
-	fc := &firestoreClient{
-		client:    client,
-		ctx:       ctx,
-		apiAuthDB: &FirestoreAPIAuthDB{client},
+	rdb := &FirestoreRecurserDB{
+		client: client,
 	}
 
-	// Use a method on a struct for the handler, and set global state there?
-
 	http.HandleFunc("/", nope)
-	http.HandleFunc("/webhooks", fc.handle)
-	http.HandleFunc("/match", fc.match)
-	http.HandleFunc("/endofbatch", fc.endofbatch)
+	http.HandleFunc("/webhooks", rdb.handle)
+	http.HandleFunc("/match", rdb.match)
+	http.HandleFunc("/endofbatch", rdb.endofbatch)
 
 	port := os.Getenv("PORT")
 	if port == "" {

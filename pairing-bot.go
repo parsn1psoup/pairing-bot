@@ -40,7 +40,6 @@ const zulipAPIURL = "https://recurse.zulipchat.com/api/v1/messages"
 var writeErrorMessage = fmt.Sprintf("Something went sideways while writing to the database. You should probably ping %v", owner)
 var readErrorMessage = fmt.Sprintf("Something went sideways while reading from the database. You should probably ping %v", owner)
 
-
 // This is a struct that gets only what
 // we need from the incoming JSON payload
 type incomingJSON struct {
@@ -85,6 +84,8 @@ func sanityCheck(c *firestoreClient, w http.ResponseWriter, r *http.Request) (in
 
 	// validate our zulip-bot token
 	// this was manually put into the database before deployment
+
+	//////// TODO this method needs to be called on an APIAuthDB, not RecurserDB
 	apiKey, err := c.apiAuthDB.GetAPIAuthKey(r.Context())
 	if err != nil {
 		log.Println("Something weird happened trying to read the auth token from the database")
@@ -97,45 +98,17 @@ func sanityCheck(c *firestoreClient, w http.ResponseWriter, r *http.Request) (in
 	return userReq, err
 }
 
-func dispatch(c *firestoreClient, cmd string, cmdArgs []string, userID string, userEmail string, userName string) (string, error) {
+func dispatch(rdb *FirestoreRecurserDB, cmd string, cmdArgs []string, userID string, userEmail string, userName string) (string, error) {
 	var response string
 	var err error
-	var recurser = map[string]interface{}{
-		"id":                 "string",
-		"name":               "string",
-		"email":              "string",
-		"isSkippingTomorrow": false,
-		"schedule": map[string]interface{}{
-			"monday":    false,
-			"tuesday":   false,
-			"wednesday": false,
-			"thursday":  false,
-			"friday":    false,
-			"saturday":  false,
-			"sunday":    false,
-		},
-	}
 
-	// get the users "document" (database entry) out of firestore
-	// we temporarily keep it in 'doc'
-	doc, err := c.client.Collection("recursers").Doc(userID).Get(c.ctx)
-	// this says "if there's an error, and if that error was not document-not-found"
-	if err != nil && grpc.Code(err) != codes.NotFound {
-		response = readErrorMessage
-		return response, err
-	}
-	// if there's a db entry, that means they were already subscribed to pairing bot
-	// if there's not, they were not subscribed
-	isSubscribed := doc.Exists()
+	ctx := context.Background()
 
-	// if the user is in the database, get their current state into this map
-	// also assign their zulip name to the name field, just in case it changed
-	// also assign their email, for the same reason
-	if isSubscribed {
-		recurser = doc.Data()
-		recurser["name"] = userName
-		recurser["email"] = userEmail
-	}
+	// TODO handle former readErrorMessage
+	rec, err := rdb.GetByUserID(ctx, userID, userEmail, userName) // returns Recurser, error
+
+	isSubscribed := rec.isSubscribed
+
 	// here's the actual actions. command input from
 	// the user has already been sanitized, so we can
 	// trust that cmd and cmdArgs only have valid stuff in them
@@ -160,8 +133,12 @@ func dispatch(c *firestoreClient, cmd string, cmdArgs []string, userID string, u
 			newSchedule[day] = true
 		}
 		// put it in the database
-		recurser["schedule"] = newSchedule
-		_, err = c.client.Collection("recursers").Doc(userID).Set(c.ctx, recurser, firestore.MergeAll)
+		rec.schedule = newSchedule
+
+		ctx := context.Background()
+
+		err = rdb.Set(ctx, userID, rec)
+
 		if err != nil {
 			response = writeErrorMessage
 			break
@@ -174,25 +151,26 @@ func dispatch(c *firestoreClient, cmd string, cmdArgs []string, userID string, u
 			break
 		}
 
-		// recurser isn't really a type, because we're using maps
-		// and not struct. but we're using it *as* a type,
-		// and this is the closest thing to a definition that occurs
-		recurser = map[string]interface{}{
-			"id":                 userID,
-			"name":               userName,
-			"email":              userEmail,
-			"isSkippingTomorrow": false,
-			"schedule": map[string]interface{}{
-				"monday":    true,
-				"tuesday":   true,
-				"wednesday": true,
-				"thursday":  true,
-				"friday":    true,
-				"saturday":  false,
-				"sunday":    false,
-			},
+		defaultSchedule := map[string]interface{}{
+			"monday":    true,
+			"tuesday":   true,
+			"wednesday": true,
+			"thursday":  true,
+			"friday":    true,
+			"saturday":  false,
+			"sunday":    false,
 		}
-		_, err = c.client.Collection("recursers").Doc(userID).Set(c.ctx, recurser)
+
+		newRecurser := Recurser{id: userID,
+			name:               userName,
+			email:              userEmail,
+			isSkippingTomorrow: false,
+			schedule:           defaultSchedule,
+		}
+
+		ctx := context.Background()
+		err = rdb.Set(ctx, userID, newRecurser)
+
 		if err != nil {
 			response = writeErrorMessage
 			break
@@ -204,7 +182,11 @@ func dispatch(c *firestoreClient, cmd string, cmdArgs []string, userID string, u
 			response = notSubscribedMessage
 			break
 		}
-		_, err = c.client.Collection("recursers").Doc(userID).Delete(c.ctx)
+
+		ctx := context.Background()
+
+		err := rdb.Delete(ctx, userID)
+
 		if err != nil {
 			response = writeErrorMessage
 			break
@@ -216,8 +198,12 @@ func dispatch(c *firestoreClient, cmd string, cmdArgs []string, userID string, u
 			response = notSubscribedMessage
 			break
 		}
-		recurser["isSkippingTomorrow"] = true
-		_, err = c.client.Collection("recursers").Doc(userID).Set(c.ctx, recurser, firestore.MergeAll)
+
+		rec.isSkippingTomorrow = true
+
+		ctx := context.Background()
+
+		err := rdb.Set(ctx, userID, rec)
 		if err != nil {
 			response = writeErrorMessage
 			break
@@ -229,8 +215,11 @@ func dispatch(c *firestoreClient, cmd string, cmdArgs []string, userID string, u
 			response = notSubscribedMessage
 			break
 		}
-		recurser["isSkippingTomorrow"] = false
-		_, err = c.client.Collection("recursers").Doc(userID).Set(c.ctx, recurser, firestore.MergeAll)
+		rec.isSkippingTomorrow = false
+
+		ctx := context.Background()
+
+		err := rdb.Set(ctx, userID, rec)
 		if err != nil {
 			response = writeErrorMessage
 			break
@@ -254,11 +243,11 @@ func dispatch(c *firestoreClient, cmd string, cmdArgs []string, userID string, u
 			"Sunday"}
 
 		// get their current name
-		whoami := recurser["name"]
+		whoami := rec.name
 
 		// get skip status and prepare to write a sentence with it
 		var skipStr string
-		if recurser["isSkippingTomorrow"].(bool) {
+		if rec.isSkippingTomorrow {
 			skipStr = " "
 		} else {
 			skipStr = " not "
@@ -269,7 +258,7 @@ func dispatch(c *firestoreClient, cmd string, cmdArgs []string, userID string, u
 		for _, day := range daysList {
 			// this line is a little wild, sorry. it looks so weird because we
 			// have to do type assertion on both interface types
-			if recurser["schedule"].(map[string]interface{})[strings.ToLower(day)].(bool) {
+			if rec.schedule.(map[string]interface{})[strings.ToLower(day)].(bool) {
 				schedule = append(schedule, day)
 			}
 		}
@@ -297,10 +286,11 @@ func dispatch(c *firestoreClient, cmd string, cmdArgs []string, userID string, u
 	return response, err
 }
 
-func (c *firestoreClient) handle(w http.ResponseWriter, r *http.Request) {
+func (rdb *FirestoreRecurserDB) handle(w http.ResponseWriter, r *http.Request) {
 	responder := json.NewEncoder(w)
 
 	// sanity check the incoming request
+	// we only sanity check requests for handle / webhooks, i.e. user input
 	userReq, err := sanityCheck(c, w, r)
 	if err != nil {
 		log.Println(err)
@@ -563,8 +553,6 @@ func subscriberCount(c *firestoreClient) int {
 }
 
 // this shuffles our recursers.
-// TODO: source of randomness is time, but this runs at the
-// same time each day. Is that ok?
 func shuffle(slice []map[string]interface{}) []map[string]interface{} {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	ret := make([]map[string]interface{}, len(slice))
