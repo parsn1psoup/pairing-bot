@@ -13,8 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"cloud.google.com/go/firestore"
 )
 
 const owner string = `@_**Maren Beam (SP2'19)**`
@@ -69,8 +67,7 @@ func (e parsingErr) Error() string {
 	return fmt.Sprintf("Error when parsing command: %s", e.msg)
 }
 
-// TODO this still takes a firestoreClient (but needs a FirestoreAPIAuthDB)
-func correctnessCheck(c *firestore.Client, w http.ResponseWriter, r *http.Request) (incomingJSON, error) {
+func correctnessCheck(pl *PairingLogic, w http.ResponseWriter, r *http.Request) (incomingJSON, error) {
 	var userReq incomingJSON
 	// Look at the incoming webhook and slurp up the JSON
 	// Error if the JSON from Zulip istelf is bad
@@ -83,14 +80,9 @@ func correctnessCheck(c *firestore.Client, w http.ResponseWriter, r *http.Reques
 	// validate our zulip-bot token
 	// this was manually put into the database before deployment
 
-	// TODO
-	// this is probably not good, just to make this work
-	adb := FirestoreAPIAuthDB{}
-	adb.client = c
-
 	ctx := context.Background()
 
-	botAuth, err := adb.GetKey(ctx, "botauth", "token")
+	botAuth, err := pl.adb.GetKey(ctx, "botauth", "token")
 
 	if err != nil {
 		log.Println("Something weird happened trying to read the auth token from the database")
@@ -103,13 +95,13 @@ func correctnessCheck(c *firestore.Client, w http.ResponseWriter, r *http.Reques
 	return userReq, err
 }
 
-func dispatch(rdb *FirestoreRecurserDB, cmd string, cmdArgs []string, userID string, userEmail string, userName string) (string, error) {
+func dispatch(pl *PairingLogic, cmd string, cmdArgs []string, userID string, userEmail string, userName string) (string, error) {
 	var response string
 	var err error
 
 	ctx := context.Background()
 
-	rec, err := rdb.GetByUserID(ctx, userID, userEmail, userName)
+	rec, err := pl.rdb.GetByUserID(ctx, userID, userEmail, userName)
 	if err != nil {
 		response = readErrorMessage
 		return response, err
@@ -145,7 +137,7 @@ func dispatch(rdb *FirestoreRecurserDB, cmd string, cmdArgs []string, userID str
 
 		ctx := context.Background()
 
-		err = rdb.Set(ctx, userID, rec)
+		err = pl.rdb.Set(ctx, userID, rec)
 
 		if err != nil {
 			response = writeErrorMessage
@@ -177,7 +169,7 @@ func dispatch(rdb *FirestoreRecurserDB, cmd string, cmdArgs []string, userID str
 		}
 
 		ctx := context.Background()
-		err = rdb.Set(ctx, userID, newRecurser)
+		err = pl.rdb.Set(ctx, userID, newRecurser)
 
 		if err != nil {
 			response = writeErrorMessage
@@ -193,7 +185,7 @@ func dispatch(rdb *FirestoreRecurserDB, cmd string, cmdArgs []string, userID str
 
 		ctx := context.Background()
 
-		err := rdb.Delete(ctx, userID)
+		err := pl.rdb.Delete(ctx, userID)
 
 		if err != nil {
 			response = writeErrorMessage
@@ -211,7 +203,7 @@ func dispatch(rdb *FirestoreRecurserDB, cmd string, cmdArgs []string, userID str
 
 		ctx := context.Background()
 
-		err := rdb.Set(ctx, userID, rec)
+		err := pl.rdb.Set(ctx, userID, rec)
 		if err != nil {
 			response = writeErrorMessage
 			break
@@ -227,7 +219,7 @@ func dispatch(rdb *FirestoreRecurserDB, cmd string, cmdArgs []string, userID str
 
 		ctx := context.Background()
 
-		err := rdb.Set(ctx, userID, rec)
+		err := pl.rdb.Set(ctx, userID, rec)
 		if err != nil {
 			response = writeErrorMessage
 			break
@@ -286,7 +278,7 @@ func dispatch(rdb *FirestoreRecurserDB, cmd string, cmdArgs []string, userID str
 	case "help":
 		response = helpMessage
 	case "count":
-		response = fmt.Sprintf("There are currently %v users subscribed to Pairing Bot.", subscriberCount(rdb))
+		response = fmt.Sprintf("There are currently %v users subscribed to Pairing Bot.", subscriberCount(pl))
 	default:
 		// this won't execute because all input has been sanitized
 		// by parseCmd() and all cases are handled explicitly above
@@ -294,12 +286,12 @@ func dispatch(rdb *FirestoreRecurserDB, cmd string, cmdArgs []string, userID str
 	return response, err
 }
 
-func (rdb *FirestoreRecurserDB) handle(w http.ResponseWriter, r *http.Request) {
+func (pl *PairingLogic) handle(w http.ResponseWriter, r *http.Request) {
 	responder := json.NewEncoder(w)
 
 	// sanity check the incoming request
 	// we only sanity check requests for handle / webhooks, i.e. user input
-	userReq, err := correctnessCheck(rdb.client, w, r)
+	userReq, err := correctnessCheck(pl, w, r)
 	if err != nil {
 		log.Println(err)
 		return
@@ -341,7 +333,7 @@ func (rdb *FirestoreRecurserDB) handle(w http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 	}
 	// the tofu and potatoes right here y'all
-	response, err := dispatch(rdb, cmd, cmdArgs, strconv.Itoa(userReq.Message.SenderID), userReq.Message.SenderEmail, userReq.Message.SenderFullName)
+	response, err := dispatch(pl, cmd, cmdArgs, strconv.Itoa(userReq.Message.SenderID), userReq.Message.SenderEmail, userReq.Message.SenderFullName)
 	if err != nil {
 		log.Println(err)
 	}
@@ -357,7 +349,7 @@ func nope(w http.ResponseWriter, r *http.Request) {
 
 // "match" makes matches for pairing, and messages those people to notify them of their match
 // it runs once per day at 8am (it's triggered with app engine's cron service)
-func (rdb *FirestoreRecurserDB) match(w http.ResponseWriter, r *http.Request) {
+func (pl *PairingLogic) match(w http.ResponseWriter, r *http.Request) {
 	// Check that the request is originating from within app engine
 	// https://cloud.google.com/appengine/docs/flexible/go/scheduling-jobs-with-cron-yaml#validating_cron_requests
 	if r.Header.Get("X-Appengine-Cron") != "true" {
@@ -367,7 +359,7 @@ func (rdb *FirestoreRecurserDB) match(w http.ResponseWriter, r *http.Request) {
 
 	ctx := context.Background()
 
-	recursersList, err := rdb.ListPairingTomorrow(ctx)
+	recursersList, err := pl.rdb.ListPairingTomorrow(ctx)
 	if err != nil {
 		log.Printf("Could not get list of recursers from DB: %s\n", err)
 	}
@@ -375,7 +367,7 @@ func (rdb *FirestoreRecurserDB) match(w http.ResponseWriter, r *http.Request) {
 
 	ctx = context.Background()
 
-	skippersList, err := rdb.ListSkippingTomorrow(ctx)
+	skippersList, err := pl.rdb.ListSkippingTomorrow(ctx)
 	if err != nil {
 		log.Printf("Could not get list of skippers from DB: %s\n", err)
 	}
@@ -385,7 +377,7 @@ func (rdb *FirestoreRecurserDB) match(w http.ResponseWriter, r *http.Request) {
 	ctx = context.Background()
 
 	for _, skipper := range skippersList {
-		err := rdb.UnsetSkippingTomorrow(ctx, skipper)
+		err := pl.rdb.UnsetSkippingTomorrow(ctx, skipper)
 		if err != nil {
 			log.Printf("Could not unset skipping for recurser %v: %s\n", skipper.id, err)
 		}
@@ -400,13 +392,8 @@ func (rdb *FirestoreRecurserDB) match(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO
-	// this is probably not good, just to make this work
-	adb := FirestoreAPIAuthDB{}
-	adb.client = rdb.client
-
 	// message the peeps!
-	botPassword, err := adb.GetKey(ctx, "apiauth", "key")
+	botPassword, err := pl.adb.GetKey(ctx, "apiauth", "key")
 	if err != nil {
 		log.Println("Something weird happened trying to read the auth token from the database")
 	}
@@ -466,7 +453,7 @@ func (rdb *FirestoreRecurserDB) match(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (rdb *FirestoreRecurserDB) endofbatch(w http.ResponseWriter, r *http.Request) {
+func (pl *PairingLogic) endofbatch(w http.ResponseWriter, r *http.Request) {
 	// Check that the request is originating from within app engine
 	// https://cloud.google.com/appengine/docs/flexible/go/scheduling-jobs-with-cron-yaml#validating_cron_requests
 	if r.Header.Get("X-Appengine-Cron") != "true" {
@@ -476,7 +463,7 @@ func (rdb *FirestoreRecurserDB) endofbatch(w http.ResponseWriter, r *http.Reques
 
 	// getting all the recursers
 	ctx := context.Background()
-	recursersList, err := rdb.GetAllUsers(ctx)
+	recursersList, err := pl.rdb.GetAllUsers(ctx)
 
 	if err != nil {
 		log.Panic(err)
@@ -484,14 +471,9 @@ func (rdb *FirestoreRecurserDB) endofbatch(w http.ResponseWriter, r *http.Reques
 
 	// message and offboard everyone (delete them from the database)
 
-	// TODO
-	// this is probably not good, just to make this work
-	adb := FirestoreAPIAuthDB{}
-	adb.client = rdb.client
-
 	ctx = context.Background()
 
-	botPassword, err := adb.GetKey(ctx, "apiauth", "key")
+	botPassword, err := pl.adb.GetKey(ctx, "apiauth", "key")
 	if err != nil {
 		log.Println("Something weird happened trying to read the auth token from the database")
 	}
@@ -506,7 +488,7 @@ func (rdb *FirestoreRecurserDB) endofbatch(w http.ResponseWriter, r *http.Reques
 		messageRequest := url.Values{}
 		var message string
 
-		err = rdb.Delete(ctx, recurserID)
+		err = pl.rdb.Delete(ctx, recurserID)
 		if err != nil {
 			log.Println(err)
 			message = fmt.Sprintf("Uh oh, I was trying to offboard you since it's the end of batch, but something went wrong. Consider messaging %v to let them know this happened.", owner)
@@ -537,12 +519,12 @@ func (rdb *FirestoreRecurserDB) endofbatch(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-func subscriberCount(rdb *FirestoreRecurserDB) int {
+func subscriberCount(pl *PairingLogic) int {
 
 	// getting all the recursers, but only to count them
 
 	ctx := context.Background()
-	recursersList, err := rdb.GetAllUsers(ctx)
+	recursersList, err := pl.rdb.GetAllUsers(ctx)
 
 	if err != nil {
 		log.Panic(err)

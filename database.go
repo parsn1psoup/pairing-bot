@@ -61,7 +61,7 @@ func MapToStruct(m map[string]interface{}) Recurser {
 // Subscriber List Lookup
 
 type RecurserDB interface {
-	GetByUserID(ctx context.Context, userID string) (Recurser, error)
+	GetByUserID(ctx context.Context, userID, userEmail, userName string) (Recurser, error)
 	GetAllUsers(ctx context.Context) ([]Recurser, error)
 	Set(ctx context.Context, userID string, recurser Recurser) error
 	Delete(ctx context.Context, userID string) error
@@ -206,7 +206,7 @@ func (f *FirestoreRecurserDB) UnsetSkippingTomorrow(ctx context.Context, recurse
 
 type MockRecurserDB struct{}
 
-func (m *MockRecurserDB) GetByUserID(ctx context.Context, userID string) (Recurser, error) {
+func (m *MockRecurserDB) GetByUserID(ctx context.Context, userID, userEmail, userName string) (Recurser, error) {
 	return Recurser{}, nil
 }
 

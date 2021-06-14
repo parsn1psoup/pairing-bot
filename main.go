@@ -13,23 +13,39 @@ import (
 // It's alive! The application starts here.
 func main() {
 
-	// setting up database connection
+	// setting up database connection: 2 clients encapsulated into PairingLogic struct
 	ctx := context.Background()
 
-	client, err := firestore.NewClient(ctx, "pairing-bot-284823")
+	rc, err := firestore.NewClient(ctx, "pairing-bot-284823")
 	if err != nil {
 		log.Panic(err)
 	}
-	defer client.Close()
+	defer rc.Close()
+
+	// TODO context
+	ac, err := firestore.NewClient(ctx, "pairing-bot-284823")
+	if err != nil {
+		log.Panic(err)
+	}
+	defer ac.Close()
 
 	rdb := &FirestoreRecurserDB{
-		client: client,
+		client: rc,
+	}
+
+	adb := &FirestoreAPIAuthDB{
+		client: ac,
+	}
+
+	pl := &PairingLogic{
+		rdb: rdb,
+		adb: adb,
 	}
 
 	http.HandleFunc("/", nope)
-	http.HandleFunc("/webhooks", rdb.handle)
-	http.HandleFunc("/match", rdb.match)
-	http.HandleFunc("/endofbatch", rdb.endofbatch)
+	http.HandleFunc("/webhooks", pl.handle)
+	http.HandleFunc("/match", pl.match)
+	http.HandleFunc("/endofbatch", pl.endofbatch)
 
 	port := os.Getenv("PORT")
 	if port == "" {
