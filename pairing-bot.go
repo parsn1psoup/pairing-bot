@@ -69,9 +69,8 @@ func (e parsingErr) Error() string {
 	return fmt.Sprintf("Error when parsing command: %s", e.msg)
 }
 
-// TODO this still takes a firestoreClient (but doesn't even use it?)
-// TODO rename to correctnessCheck or smth
-func sanityCheck(c *firestore.Client, w http.ResponseWriter, r *http.Request) (incomingJSON, error) {
+// TODO this still takes a firestoreClient (but needs a FirestoreAPIAuthDB)
+func correctnessCheck(c *firestore.Client, w http.ResponseWriter, r *http.Request) (incomingJSON, error) {
 	var userReq incomingJSON
 	// Look at the incoming webhook and slurp up the JSON
 	// Error if the JSON from Zulip istelf is bad
@@ -297,7 +296,7 @@ func (rdb *FirestoreRecurserDB) handle(w http.ResponseWriter, r *http.Request) {
 
 	// sanity check the incoming request
 	// we only sanity check requests for handle / webhooks, i.e. user input
-	userReq, err := sanityCheck(rdb.client, w, r)
+	userReq, err := correctnessCheck(rdb.client, w, r)
 	if err != nil {
 		log.Println(err)
 		return
