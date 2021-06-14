@@ -109,8 +109,11 @@ func dispatch(rdb *FirestoreRecurserDB, cmd string, cmdArgs []string, userID str
 
 	ctx := context.Background()
 
-	// TODO handle former readErrorMessage
-	rec, err := rdb.GetByUserID(ctx, userID, userEmail, userName) // returns Recurser, error
+	rec, err := rdb.GetByUserID(ctx, userID, userEmail, userName)
+	if err != nil {
+		response = readErrorMessage
+		return response, err
+	}
 
 	isSubscribed := rec.isSubscribed
 
@@ -364,12 +367,18 @@ func (rdb *FirestoreRecurserDB) match(w http.ResponseWriter, r *http.Request) {
 
 	ctx := context.Background()
 
-	// TODO handle err / empty list?
-	recursersList, err := rdb.ListPairingTomorrow(ctx) // TODO handle error
+	recursersList, err := rdb.ListPairingTomorrow(ctx)
+	if err != nil {
+		log.Printf("Could not get list of recursers from DB: %s\n", err)
+	}
+	// TODO do we want to return in case of errors here?
 
 	ctx = context.Background()
 
 	skippersList, err := rdb.ListSkippingTomorrow(ctx)
+	if err != nil {
+		log.Printf("Could not get list of skippers from DB: %s\n", err)
+	}
 
 	// get everyone who was set to skip today and set them back to isSkippingTomorrow = false
 
@@ -378,7 +387,7 @@ func (rdb *FirestoreRecurserDB) match(w http.ResponseWriter, r *http.Request) {
 	for _, skipper := range skippersList {
 		err := rdb.UnsetSkippingTomorrow(ctx, skipper)
 		if err != nil {
-			log.Panic(err)
+			log.Printf("Could not unset skipping for recurser %v: %s\n", skipper.id, err)
 		}
 	}
 
@@ -414,7 +423,10 @@ func (rdb *FirestoreRecurserDB) match(w http.ResponseWriter, r *http.Request) {
 		messageRequest.Add("type", "private")
 		messageRequest.Add("to", recurser.email)
 		messageRequest.Add("content", oddOneOutMessage)
-		req, err := http.NewRequest("POST", zulipAPIURL, strings.NewReader(messageRequest.Encode())) // TODO handle error
+		req, err := http.NewRequest("POST", zulipAPIURL, strings.NewReader(messageRequest.Encode()))
+		if err != nil {
+			log.Printf("Error when trying to send oddOneOutMessage: %s\n", err)
+		}
 		req.SetBasicAuth(botUsername, botPassword)
 		req.Header.Set("content-type", "application/x-www-form-urlencoded")
 		resp, err := zulipClient.Do(req)
@@ -434,7 +446,10 @@ func (rdb *FirestoreRecurserDB) match(w http.ResponseWriter, r *http.Request) {
 		messageRequest.Add("type", "private")
 		messageRequest.Add("to", recursersList[i].email+", "+recursersList[i+1].email)
 		messageRequest.Add("content", matchedMessage)
-		req, err := http.NewRequest("POST", zulipAPIURL, strings.NewReader(messageRequest.Encode())) // TODO handle error
+		req, err := http.NewRequest("POST", zulipAPIURL, strings.NewReader(messageRequest.Encode()))
+		if err != nil {
+			log.Printf("Error when trying to send matchedMessage: %s\n", err)
+		}
 		req.SetBasicAuth(botUsername, botPassword)
 		req.Header.Set("content-type", "application/x-www-form-urlencoded")
 		resp, err := zulipClient.Do(req)
@@ -503,7 +518,10 @@ func (rdb *FirestoreRecurserDB) endofbatch(w http.ResponseWriter, r *http.Reques
 		messageRequest.Add("type", "private")
 		messageRequest.Add("to", recurserEmail)
 		messageRequest.Add("content", message)
-		req, err := http.NewRequest("POST", zulipAPIURL, strings.NewReader(messageRequest.Encode())) // TODO handle err
+		req, err := http.NewRequest("POST", zulipAPIURL, strings.NewReader(messageRequest.Encode()))
+		if err != nil {
+			log.Printf("Error when trying to send offboarding message to %s: %s\n", recurserID, err)
+		}
 		req.SetBasicAuth(botUsername, botPassword)
 		req.Header.Set("content-type", "application/x-www-form-urlencoded")
 		resp, err := zulipClient.Do(req)
