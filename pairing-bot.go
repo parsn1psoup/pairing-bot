@@ -69,7 +69,8 @@ func (e parsingErr) Error() string {
 	return fmt.Sprintf("Error when parsing command: %s", e.msg)
 }
 
-// TODO this still takes a firestoreClient
+// TODO this still takes a firestoreClient (but doesn't even use it?)
+// TODO rename to correctnessCheck or smth
 func sanityCheck(c *firestore.Client, w http.ResponseWriter, r *http.Request) (incomingJSON, error) {
 	var userReq incomingJSON
 	// Look at the incoming webhook and slurp up the JSON
@@ -119,7 +120,7 @@ func dispatch(rdb *FirestoreRecurserDB, cmd string, cmdArgs []string, userID str
 	// trust that cmd and cmdArgs only have valid stuff in them
 	switch cmd {
 	case "schedule":
-		if isSubscribed == false {
+		if !isSubscribed {
 			response = notSubscribedMessage
 			break
 		}
@@ -183,7 +184,7 @@ func dispatch(rdb *FirestoreRecurserDB, cmd string, cmdArgs []string, userID str
 		response = subscribeMessage
 
 	case "unsubscribe":
-		if isSubscribed == false {
+		if !isSubscribed {
 			response = notSubscribedMessage
 			break
 		}
@@ -199,7 +200,7 @@ func dispatch(rdb *FirestoreRecurserDB, cmd string, cmdArgs []string, userID str
 		response = unsubscribeMessage
 
 	case "skip":
-		if isSubscribed == false {
+		if !isSubscribed {
 			response = notSubscribedMessage
 			break
 		}
@@ -216,7 +217,7 @@ func dispatch(rdb *FirestoreRecurserDB, cmd string, cmdArgs []string, userID str
 		response = `Tomorrow: cancelled. I feel you. **I will not match you** for pairing tomorrow <3`
 
 	case "unskip":
-		if isSubscribed == false {
+		if !isSubscribed {
 			response = notSubscribedMessage
 			break
 		}
@@ -232,7 +233,7 @@ func dispatch(rdb *FirestoreRecurserDB, cmd string, cmdArgs []string, userID str
 		response = "Tomorrow: uncancelled! Heckin *yes*! **I will match you** for pairing tomorrow :)"
 
 	case "status":
-		if isSubscribed == false {
+		if !isSubscribed {
 			response = notSubscribedMessage
 			break
 		}
@@ -365,7 +366,7 @@ func (rdb *FirestoreRecurserDB) match(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 
 	// TODO handle err / empty list?
-	recursersList, err := rdb.ListPairingTomorrow(ctx)
+	recursersList, err := rdb.ListPairingTomorrow(ctx) // TODO handle error
 
 	ctx = context.Background()
 
@@ -414,7 +415,7 @@ func (rdb *FirestoreRecurserDB) match(w http.ResponseWriter, r *http.Request) {
 		messageRequest.Add("type", "private")
 		messageRequest.Add("to", recurser.email)
 		messageRequest.Add("content", oddOneOutMessage)
-		req, err := http.NewRequest("POST", zulipAPIURL, strings.NewReader(messageRequest.Encode()))
+		req, err := http.NewRequest("POST", zulipAPIURL, strings.NewReader(messageRequest.Encode())) // TODO handle error
 		req.SetBasicAuth(botUsername, botPassword)
 		req.Header.Set("content-type", "application/x-www-form-urlencoded")
 		resp, err := zulipClient.Do(req)
@@ -434,7 +435,7 @@ func (rdb *FirestoreRecurserDB) match(w http.ResponseWriter, r *http.Request) {
 		messageRequest.Add("type", "private")
 		messageRequest.Add("to", recursersList[i].email+", "+recursersList[i+1].email)
 		messageRequest.Add("content", matchedMessage)
-		req, err := http.NewRequest("POST", zulipAPIURL, strings.NewReader(messageRequest.Encode()))
+		req, err := http.NewRequest("POST", zulipAPIURL, strings.NewReader(messageRequest.Encode())) // TODO handle error
 		req.SetBasicAuth(botUsername, botPassword)
 		req.Header.Set("content-type", "application/x-www-form-urlencoded")
 		resp, err := zulipClient.Do(req)
@@ -503,7 +504,7 @@ func (rdb *FirestoreRecurserDB) endofbatch(w http.ResponseWriter, r *http.Reques
 		messageRequest.Add("type", "private")
 		messageRequest.Add("to", recurserEmail)
 		messageRequest.Add("content", message)
-		req, err := http.NewRequest("POST", zulipAPIURL, strings.NewReader(messageRequest.Encode()))
+		req, err := http.NewRequest("POST", zulipAPIURL, strings.NewReader(messageRequest.Encode())) // TODO handle err
 		req.SetBasicAuth(botUsername, botPassword)
 		req.Header.Set("content-type", "application/x-www-form-urlencoded")
 		resp, err := zulipClient.Do(req)
@@ -532,7 +533,6 @@ func subscriberCount(rdb *FirestoreRecurserDB) int {
 
 	return len(recursersList)
 }
-
 
 // this shuffles our recursers.
 func shuffle(slice []Recurser) []Recurser {

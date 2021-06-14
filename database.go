@@ -8,8 +8,8 @@ import (
 
 	"cloud.google.com/go/firestore"
 	"google.golang.org/api/iterator"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type Recurser struct {
@@ -79,7 +79,7 @@ func (f *FirestoreRecurserDB) GetByUserID(ctx context.Context, userID, userEmail
 	// we temporarily keep it in 'doc'
 	doc, err := f.client.Collection("recursers").Doc(userID).Get(ctx)
 	// this says "if there's an error, and if that error was not document-not-found"
-	if err != nil && grpc.Code(err) != codes.NotFound {
+	if err != nil && status.Code(err) != codes.NotFound {
 		return Recurser{}, err
 	}
 

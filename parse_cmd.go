@@ -65,7 +65,7 @@ func parseCmd(cmdStr string) (string, []string, error) {
 			return "help", nil, err
 		case cmd[0] == "schedule":
 			for _, v := range cmd[1:] {
-				if contains(daysList, v) == false {
+				if !contains(daysList, v) {
 					err = &parsingErr{"the user issued SCHEDULE with malformed arguments"}
 					return "help", nil, err
 				}
