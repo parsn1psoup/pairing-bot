@@ -37,7 +37,7 @@ func main() {
 		client: ac,
 	}
 
-	sc := &zulipClient{}
+	sc := &zulipUserRequest{}
 
 	pl := &PairingLogic{
 		rdb: rdb,

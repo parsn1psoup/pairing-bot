@@ -239,6 +239,7 @@ func (pl *PairingLogic) endofbatch(w http.ResponseWriter, r *http.Request) {
 		log.Println("Something weird happened trying to read the auth token from the database")
 	}
 	botUsername := botEmailAddress
+
 	zulipClient := &http.Client{}
 
 	ctx = context.Background() // TODO my use of contexts is definitely wrong
