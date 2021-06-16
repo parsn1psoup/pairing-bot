@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 )
-
-const botEmailAddress = "pairing-bot@recurse.zulipchat.com"
-const zulipAPIURL = "https://recurse.zulipchat.com/api/v1/messages"
 
 // This is a struct that gets only what
 // we need from the incoming JSON payload
@@ -52,9 +52,49 @@ type userRequest interface {
 	extractUserData(ctx context.Context) *UserDataFromJSON // does this need an error return value? anything that hasn't been validated previously?
 }
 
+type userNotification interface {
+	sendUserMessage(ctx context.Context, botPassword, user, message string) error
+}
+
 // implements userRequest
 type zulipUserRequest struct {
 	json incomingJSON
+}
+
+// implements userNotification
+type zulipUserNotification struct {
+	botUsername string
+	zulipAPIURL string
+}
+
+func (zun *zulipUserNotification) sendUserMessage(ctx context.Context, botPassword, user, message string) error {
+
+	zulipClient := &http.Client{}
+	messageRequest := url.Values{}
+	messageRequest.Add("type", "private")
+	messageRequest.Add("to", user)
+	messageRequest.Add("content", message)
+
+	req, err := http.NewRequest("POST", zun.zulipAPIURL, strings.NewReader(messageRequest.Encode()))
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth(zun.botUsername, botPassword)
+	req.Header.Set("content-type", "application/x-www-form-urlencoded")
+
+	resp, err := zulipClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBodyText, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	log.Println(string(respBodyText))
+
+	return nil
+
 }
 
 func (zu *zulipUserRequest) validateJSON(ctx context.Context, r *http.Request) error {

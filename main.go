@@ -39,10 +39,16 @@ func main() {
 
 	ur := &zulipUserRequest{}
 
+	un := &zulipUserNotification{
+		botUsername: "pairing-bot@recurse.zulipchat.com",
+		zulipAPIURL: "https://recurse.zulipchat.com/api/v1/messages",
+	}
+
 	pl := &PairingLogic{
 		rdb: rdb,
 		adb: adb,
 		ur:  ur,
+		un:  un,
 	}
 
 	http.HandleFunc("/", nope)                    // will this handle anything that's not defined?

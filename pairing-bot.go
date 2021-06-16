@@ -4,16 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"math/rand"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 )
 
 const owner string = `@_**Maren Beam (SP2'19)**`
+const oddOneOutMessage string = "OK this is awkward.\nThere were an odd number of people in the match-set today, which means that one person couldn't get paired. Unfortunately, it was you -- I'm really sorry :(\nI promise it's not personal, it was very much random. Hopefully this doesn't happen again too soon. Enjoy your day! <3"
+const matchedMessage = "Hi you two! You've been matched for pairing :)\n\nHave fun!"
+const offboardedMessage = "Hi! You've been unsubscribed from Pairing Bot.\n\nThis happens at the end of every batch, when everyone is offboarded even if they're still in batch. If you'd like to re-subscribe, just send me a message that says `subscribe`.\n\nBe well! :)"
 
 // this is the "id" field from zulip, and is a permanent user ID that's not secret
 // Pairing Bot's owner can add their ID here for testing. ctrl+f "ownerID" to see where it's used
@@ -29,6 +29,7 @@ type PairingLogic struct {
 	rdb RecurserDB
 	adb APIAuthDB
 	ur  userRequest
+	un  userNotification
 }
 
 func (pl *PairingLogic) handle(w http.ResponseWriter, r *http.Request) {
@@ -158,8 +159,6 @@ func (pl *PairingLogic) match(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Println("Something weird happened trying to read the auth token from the database")
 	}
-	botUsername := botEmailAddress
-	zulipClient := &http.Client{}
 
 	// if there's an odd number today, message the last person in the list
 	// and tell them they don't get a match today, then knock them off the list
@@ -167,49 +166,21 @@ func (pl *PairingLogic) match(w http.ResponseWriter, r *http.Request) {
 		recurser := recursersList[len(recursersList)-1]
 		recursersList = recursersList[:len(recursersList)-1]
 		log.Println("Someone was the odd-one-out today")
-		messageRequest := url.Values{}
-		messageRequest.Add("type", "private")
-		messageRequest.Add("to", recurser.email)
-		messageRequest.Add("content", oddOneOutMessage)
-		req, err := http.NewRequest("POST", zulipAPIURL, strings.NewReader(messageRequest.Encode()))
+
+		err := pl.un.sendUserMessage(ctx, botPassword, recurser.email, oddOneOutMessage)
 		if err != nil {
-			log.Printf("Error when trying to send oddOneOutMessage: %s\n", err)
+			log.Printf("Error when trying to send oddOneOut message to %s: %s\n", recurser.email, err)
 		}
-		req.SetBasicAuth(botUsername, botPassword)
-		req.Header.Set("content-type", "application/x-www-form-urlencoded")
-		resp, err := zulipClient.Do(req)
-		if err != nil {
-			log.Panic(err)
-		}
-		defer resp.Body.Close()
-		respBodyText, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			log.Println(err)
-		}
-		log.Println(string(respBodyText))
+
 	}
 
 	for i := 0; i < len(recursersList); i += 2 {
-		messageRequest := url.Values{}
-		messageRequest.Add("type", "private")
-		messageRequest.Add("to", recursersList[i].email+", "+recursersList[i+1].email)
-		messageRequest.Add("content", matchedMessage)
-		req, err := http.NewRequest("POST", zulipAPIURL, strings.NewReader(messageRequest.Encode()))
+
+		emails := recursersList[i].email + ", " + recursersList[i+1].email
+		err := pl.un.sendUserMessage(ctx, botPassword, emails, matchedMessage)
 		if err != nil {
-			log.Printf("Error when trying to send matchedMessage: %s\n", err)
+			log.Printf("Error when trying to send matchedMessage to %s: %s\n", emails, err)
 		}
-		req.SetBasicAuth(botUsername, botPassword)
-		req.Header.Set("content-type", "application/x-www-form-urlencoded")
-		resp, err := zulipClient.Do(req)
-		if err != nil {
-			log.Panic(err)
-		}
-		defer resp.Body.Close()
-		respBodyText, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			log.Println(err)
-		}
-		log.Println(string(respBodyText))
 		log.Println(recursersList[i].email, "was", "matched", "with", recursersList[i+1].email)
 	}
 }
@@ -225,7 +196,6 @@ func (pl *PairingLogic) endofbatch(w http.ResponseWriter, r *http.Request) {
 	// getting all the recursers
 	ctx := context.Background()
 	recursersList, err := pl.rdb.GetAllUsers(ctx)
-
 	if err != nil {
 		log.Panic(err)
 	}
@@ -233,21 +203,17 @@ func (pl *PairingLogic) endofbatch(w http.ResponseWriter, r *http.Request) {
 	// message and offboard everyone (delete them from the database)
 
 	ctx = context.Background()
-
 	botPassword, err := pl.adb.GetKey(ctx, "apiauth", "key")
 	if err != nil {
 		log.Println("Something weird happened trying to read the auth token from the database")
 	}
-	botUsername := botEmailAddress
-
-	zulipClient := &http.Client{}
 
 	ctx = context.Background() // TODO my use of contexts is definitely wrong
 
 	for i := 0; i < len(recursersList); i++ {
+
 		recurserID := recursersList[i].id
 		recurserEmail := recursersList[i].email
-		messageRequest := url.Values{}
 		var message string
 
 		err = pl.rdb.Delete(ctx, recurserID)
@@ -259,25 +225,10 @@ func (pl *PairingLogic) endofbatch(w http.ResponseWriter, r *http.Request) {
 			message = offboardedMessage
 		}
 
-		messageRequest.Add("type", "private")
-		messageRequest.Add("to", recurserEmail)
-		messageRequest.Add("content", message)
-		req, err := http.NewRequest("POST", zulipAPIURL, strings.NewReader(messageRequest.Encode()))
+		err := pl.un.sendUserMessage(ctx, botPassword, recurserEmail, message)
 		if err != nil {
-			log.Printf("Error when trying to send offboarding message to %s: %s\n", recurserID, err)
+			log.Printf("Error when trying to send offboarding message to %s: %s\n", recurserEmail, err)
 		}
-		req.SetBasicAuth(botUsername, botPassword)
-		req.Header.Set("content-type", "application/x-www-form-urlencoded")
-		resp, err := zulipClient.Do(req)
-		if err != nil {
-			log.Panic(err)
-		}
-		defer resp.Body.Close()
-		respBodyText, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			log.Println(err)
-		}
-		log.Println(string(respBodyText))
 	}
 }
 
