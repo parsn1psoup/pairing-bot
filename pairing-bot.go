@@ -28,7 +28,7 @@ func (e parsingErr) Error() string {
 type PairingLogic struct {
 	rdb RecurserDB
 	adb APIAuthDB
-	sc  someClient
+	ur  userRequest
 }
 
 func (pl *PairingLogic) handle(w http.ResponseWriter, r *http.Request) {
@@ -38,7 +38,7 @@ func (pl *PairingLogic) handle(w http.ResponseWriter, r *http.Request) {
 	// observation: we only validate requests for /webhooks, i.e. user input through zulip
 
 	ctx := context.Background()
-	err := pl.sc.validateJSON(ctx, r)
+	err := pl.ur.validateJSON(ctx, r)
 	if err != nil {
 		http.NotFound(w, r)
 	}
@@ -48,7 +48,7 @@ func (pl *PairingLogic) handle(w http.ResponseWriter, r *http.Request) {
 		log.Println("Something weird happened trying to read the auth token from the database")
 	}
 
-	if !pl.sc.validateAuthCreds(ctx, botAuth) {
+	if !pl.ur.validateAuthCreds(ctx, botAuth) {
 		http.NotFound(w, r)
 	}
 
@@ -66,7 +66,7 @@ func (pl *PairingLogic) handle(w http.ResponseWriter, r *http.Request) {
 		}
 	*/
 
-	intro := pl.sc.validateInteractionType(ctx)
+	intro := pl.ur.validateInteractionType(ctx)
 	if intro != nil {
 		err = responder.Encode(intro)
 		if err != nil {
@@ -75,7 +75,7 @@ func (pl *PairingLogic) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ignore := pl.sc.ignoreInteractionType(ctx)
+	ignore := pl.ur.ignoreInteractionType(ctx)
 	if ignore != nil {
 		err = responder.Encode(ignore)
 		if err != nil {
@@ -85,13 +85,13 @@ func (pl *PairingLogic) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	// you *should* be able to throw any string at this thing and get back a valid command for dispatch()
 	// if there are no commad arguments, cmdArgs will be nil
-	cmd, cmdArgs, err := pl.sc.sanitizeUserInput(ctx)
+	cmd, cmdArgs, err := pl.ur.sanitizeUserInput(ctx)
 	if err != nil {
 		log.Println(err)
 	}
 
 	// the tofu and potatoes right here y'all
-	userData := pl.sc.extractUserData(ctx)
+	userData := pl.ur.extractUserData(ctx)
 
 	response, err := dispatch(pl, cmd, cmdArgs, userData.userID, userData.userEmail, userData.userName)
 	if err != nil {

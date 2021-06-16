@@ -37,12 +37,12 @@ func main() {
 		client: ac,
 	}
 
-	sc := &zulipUserRequest{}
+	ur := &zulipUserRequest{}
 
 	pl := &PairingLogic{
 		rdb: rdb,
 		adb: adb,
-		sc:  sc,
+		ur:  ur,
 	}
 
 	http.HandleFunc("/", nope)                    // will this handle anything that's not defined?

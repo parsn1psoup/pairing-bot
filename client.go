@@ -43,7 +43,7 @@ type botNoResponse struct {
 	Message bool `json:"response_not_required"`
 }
 
-type someClient interface {
+type userRequest interface {
 	validateJSON(ctx context.Context, r *http.Request) error
 	validateAuthCreds(ctx context.Context, tokenFromDB string) bool
 	validateInteractionType(ctx context.Context) *botResponse
@@ -52,6 +52,7 @@ type someClient interface {
 	extractUserData(ctx context.Context) *UserDataFromJSON // does this need an error return value? anything that hasn't been validated previously?
 }
 
+// implements userRequest
 type zulipUserRequest struct {
 	json incomingJSON
 }
