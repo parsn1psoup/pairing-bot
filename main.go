@@ -37,15 +37,18 @@ func main() {
 		client: ac,
 	}
 
+	sc := &zulipClient{}
+
 	pl := &PairingLogic{
 		rdb: rdb,
 		adb: adb,
+		sc:  sc,
 	}
 
-	http.HandleFunc("/", nope)
-	http.HandleFunc("/webhooks", pl.handle)
-	http.HandleFunc("/match", pl.match)
-	http.HandleFunc("/endofbatch", pl.endofbatch)
+	http.HandleFunc("/", nope)                    // will this handle anything that's not defined?
+	http.HandleFunc("/webhooks", pl.handle)       // from zulip
+	http.HandleFunc("/match", pl.match)           // from GCP
+	http.HandleFunc("/endofbatch", pl.endofbatch) // manually triggered
 
 	port := os.Getenv("PORT")
 	if port == "" {

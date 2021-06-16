@@ -3,14 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"math/rand"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -21,282 +19,41 @@ const owner string = `@_**Maren Beam (SP2'19)**`
 // Pairing Bot's owner can add their ID here for testing. ctrl+f "ownerID" to see where it's used
 const ownerID = 215391
 
-const helpMessage string = "**How to use Pairing Bot:**\n* `subscribe` to start getting matched with other Pairing Bot users for pair programming\n* `schedule monday wednesday friday` to set your weekly pairing schedule\n  * In this example, I've been set to find pairing partners for you on every Monday, Wednesday, and Friday\n  * You can schedule pairing for any combination of days in the week\n* `skip tomorrow` to skip pairing tomorrow\n  * This is valid until matches go out at 04:00 UTC\n* `unskip tomorrow` to undo skipping tomorrow\n* `status` to show your current schedule, skip status, and name\n* `count` to get the current number of subscribers\n* `unsubscribe` to stop getting matched entirely\n\nIf you've found a bug, please [submit an issue on github](https://github.com/thwidge/pairing-bot/issues)!"
-const subscribeMessage string = "Yay! You're now subscribed to Pairing Bot!\nCurrently, I'm set to find pair programming partners for you on **Mondays**, **Tuesdays**, **Wednesdays**, **Thursdays**, and **Fridays**.\nYou can customize your schedule any time with `schedule` :)"
-const unsubscribeMessage string = "You're unsubscribed!\nI won't find pairing partners for you unless you `subscribe`.\n\nBe well :)"
-const notSubscribedMessage string = "You're not subscribed to Pairing Bot <3"
-const oddOneOutMessage string = "OK this is awkward.\nThere were an odd number of people in the match-set today, which means that one person couldn't get paired. Unfortunately, it was you -- I'm really sorry :(\nI promise it's not personal, it was very much random. Hopefully this doesn't happen again too soon. Enjoy your day! <3"
-const matchedMessage = "Hi you two! You've been matched for pairing :)\n\nHave fun!"
-const offboardedMessage = "Hi! You've been unsubscribed from Pairing Bot.\n\nThis happens at the end of every batch, when everyone is offboarded even if they're still in batch. If you'd like to re-subscribe, just send me a message that says `subscribe`.\n\nBe well! :)"
-
-const botEmailAddress = "pairing-bot@recurse.zulipchat.com"
-const zulipAPIURL = "https://recurse.zulipchat.com/api/v1/messages"
-
-var writeErrorMessage = fmt.Sprintf("Something went sideways while writing to the database. You should probably ping %v", owner)
-var readErrorMessage = fmt.Sprintf("Something went sideways while reading from the database. You should probably ping %v", owner)
-
-// This is a struct that gets only what
-// we need from the incoming JSON payload
-type incomingJSON struct {
-	Data    string `json:"data"`
-	Token   string `json:"token"`
-	Trigger string `json:"trigger"`
-	Message struct {
-		SenderID         int         `json:"sender_id"`
-		DisplayRecipient interface{} `json:"display_recipient"`
-		SenderEmail      string      `json:"sender_email"`
-		SenderFullName   string      `json:"sender_full_name"`
-	} `json:"message"`
-}
-
-// Zulip has to get JSON back from the bot,
-// this does that. An empty message field stops
-// zulip from throwing an error at the user that
-// messaged the bot, but doesn't send a response
-type botResponse struct {
-	Message string `json:"content"`
-}
-
-type botNoResponse struct {
-	Message bool `json:"response_not_required"`
-}
-
 type parsingErr struct{ msg string }
 
 func (e parsingErr) Error() string {
 	return fmt.Sprintf("Error when parsing command: %s", e.msg)
 }
 
-func correctnessCheck(pl *PairingLogic, w http.ResponseWriter, r *http.Request) (incomingJSON, error) {
-	var userReq incomingJSON
-	// Look at the incoming webhook and slurp up the JSON
-	// Error if the JSON from Zulip istelf is bad
-	err := json.NewDecoder(r.Body).Decode(&userReq)
-	if err != nil {
-		http.NotFound(w, r)
-		return userReq, err
-	}
-
-	// validate our zulip-bot token
-	// this was manually put into the database before deployment
-
-	ctx := context.Background()
-
-	botAuth, err := pl.adb.GetKey(ctx, "botauth", "token")
-
-	if err != nil {
-		log.Println("Something weird happened trying to read the auth token from the database")
-		return userReq, err
-	}
-	if userReq.Token != botAuth {
-		http.NotFound(w, r)
-		return userReq, errors.New("unauthorized interaction attempt")
-	}
-	return userReq, err
-}
-
-func dispatch(pl *PairingLogic, cmd string, cmdArgs []string, userID string, userEmail string, userName string) (string, error) {
-	var response string
-	var err error
-
-	ctx := context.Background()
-
-	rec, err := pl.rdb.GetByUserID(ctx, userID, userEmail, userName)
-	if err != nil {
-		response = readErrorMessage
-		return response, err
-	}
-
-	isSubscribed := rec.isSubscribed
-
-	// here's the actual actions. command input from
-	// the user has already been sanitized, so we can
-	// trust that cmd and cmdArgs only have valid stuff in them
-	switch cmd {
-	case "schedule":
-		if !isSubscribed {
-			response = notSubscribedMessage
-			break
-		}
-		// create a new blank schedule
-		var newSchedule = map[string]interface{}{
-			"monday":    false,
-			"tuesday":   false,
-			"wednesday": false,
-			"thursday":  false,
-			"friday":    false,
-			"saturday":  false,
-			"sunday":    false,
-		}
-		// populate it with the new days they want to pair on
-		for _, day := range cmdArgs {
-			newSchedule[day] = true
-		}
-		// put it in the database
-		rec.schedule = newSchedule
-
-		ctx := context.Background()
-
-		err = pl.rdb.Set(ctx, userID, rec)
-
-		if err != nil {
-			response = writeErrorMessage
-			break
-		}
-		response = "Awesome, your new schedule's been set! You can check it with `status`."
-
-	case "subscribe":
-		if isSubscribed {
-			response = "You're already subscribed! Use `schedule` to set your schedule."
-			break
-		}
-
-		defaultSchedule := map[string]interface{}{
-			"monday":    true,
-			"tuesday":   true,
-			"wednesday": true,
-			"thursday":  true,
-			"friday":    true,
-			"saturday":  false,
-			"sunday":    false,
-		}
-
-		newRecurser := Recurser{id: userID,
-			name:               userName,
-			email:              userEmail,
-			isSkippingTomorrow: false,
-			schedule:           defaultSchedule,
-		}
-
-		ctx := context.Background()
-		err = pl.rdb.Set(ctx, userID, newRecurser)
-
-		if err != nil {
-			response = writeErrorMessage
-			break
-		}
-		response = subscribeMessage
-
-	case "unsubscribe":
-		if !isSubscribed {
-			response = notSubscribedMessage
-			break
-		}
-
-		ctx := context.Background()
-
-		err := pl.rdb.Delete(ctx, userID)
-
-		if err != nil {
-			response = writeErrorMessage
-			break
-		}
-		response = unsubscribeMessage
-
-	case "skip":
-		if !isSubscribed {
-			response = notSubscribedMessage
-			break
-		}
-
-		rec.isSkippingTomorrow = true
-
-		ctx := context.Background()
-
-		err := pl.rdb.Set(ctx, userID, rec)
-		if err != nil {
-			response = writeErrorMessage
-			break
-		}
-		response = `Tomorrow: cancelled. I feel you. **I will not match you** for pairing tomorrow <3`
-
-	case "unskip":
-		if !isSubscribed {
-			response = notSubscribedMessage
-			break
-		}
-		rec.isSkippingTomorrow = false
-
-		ctx := context.Background()
-
-		err := pl.rdb.Set(ctx, userID, rec)
-		if err != nil {
-			response = writeErrorMessage
-			break
-		}
-		response = "Tomorrow: uncancelled! Heckin *yes*! **I will match you** for pairing tomorrow :)"
-
-	case "status":
-		if !isSubscribed {
-			response = notSubscribedMessage
-			break
-		}
-		// this particular days list is for sorting and printing the
-		// schedule correctly, since it's stored in a map in all lowercase
-		var daysList = []string{
-			"Monday",
-			"Tuesday",
-			"Wednesday",
-			"Thursday",
-			"Friday",
-			"Saturday",
-			"Sunday"}
-
-		// get their current name
-		whoami := rec.name
-
-		// get skip status and prepare to write a sentence with it
-		var skipStr string
-		if rec.isSkippingTomorrow {
-			skipStr = " "
-		} else {
-			skipStr = " not "
-		}
-
-		// make a sorted list of their schedule
-		var schedule []string
-		for _, day := range daysList {
-			// this line is a little wild, sorry. it looks so weird because we
-			// have to do type assertion on both interface types
-			if rec.schedule[strings.ToLower(day)].(bool) {
-				schedule = append(schedule, day)
-			}
-		}
-		// make a lil nice-lookin schedule string
-		var scheduleStr string
-		for i := range schedule[:len(schedule)-1] {
-			scheduleStr += schedule[i] + "s, "
-		}
-		if len(schedule) > 1 {
-			scheduleStr += "and " + schedule[len(schedule)-1] + "s"
-		} else if len(schedule) == 1 {
-			scheduleStr += schedule[0] + "s"
-		}
-
-		response = fmt.Sprintf("* You're %v\n* You're scheduled for pairing on **%v**\n* **You're%vset to skip** pairing tomorrow", whoami, scheduleStr, skipStr)
-
-	case "help":
-		response = helpMessage
-	case "count":
-		response = fmt.Sprintf("There are currently %v users subscribed to Pairing Bot.", subscriberCount(pl))
-	default:
-		// this won't execute because all input has been sanitized
-		// by parseCmd() and all cases are handled explicitly above
-	}
-	return response, err
+type PairingLogic struct {
+	rdb RecurserDB
+	adb APIAuthDB
+	sc  someClient
 }
 
 func (pl *PairingLogic) handle(w http.ResponseWriter, r *http.Request) {
 	responder := json.NewEncoder(w)
 
-	// sanity check the incoming request
-	// we only sanity check requests for handle / webhooks, i.e. user input
-	userReq, err := correctnessCheck(pl, w, r)
+	// check and authorize the incoming request
+	// observation: we only validate requests for /webhooks, i.e. user input through zulip
+
+	ctx := context.Background()
+	err := pl.sc.validateJSON(ctx, r)
 	if err != nil {
-		log.Println(err)
-		return
+		http.NotFound(w, r)
 	}
 
+	botAuth, err := pl.adb.GetKey(ctx, "botauth", "token")
+	if err != nil {
+		log.Println("Something weird happened trying to read the auth token from the database")
+	}
+
+	if !pl.sc.validateAuthCreds(ctx, botAuth) {
+		http.NotFound(w, r)
+	}
+
+	// TODO handle this with the new data types.
+	// how to toggle maintenance mode witout commenting out code? run with env variable in app.yaml? https://cloud.google.com/appengine/docs/standard/python/config/appref
 	/*
 		// for testing only
 		// this responds with a maintenance message and quits if the request is coming from anyone other than the owner
@@ -309,34 +66,38 @@ func (pl *PairingLogic) handle(w http.ResponseWriter, r *http.Request) {
 		}
 	*/
 
-	if userReq.Trigger != "private_message" {
-		err = responder.Encode(botResponse{"Hi! I'm Pairing Bot (she/her)!\n\nSend me a PM that says `subscribe` to get started :smiley:\n\n:pear::robot:\n:octopus::octopus:"})
+	intro := pl.sc.validateInteractionType(ctx)
+	if intro != nil {
+		err = responder.Encode(intro)
 		if err != nil {
 			log.Println(err)
 		}
 		return
 	}
-	// if there aren't two 'recipients' (one sender and one receiver),
-	// then don't respond. this stops pairing bot from responding in the group
-	// chat she starts when she matches people
-	if len(userReq.Message.DisplayRecipient.([]interface{})) != 2 {
-		err = responder.Encode(botNoResponse{true})
+
+	ignore := pl.sc.ignoreInteractionType(ctx)
+	if ignore != nil {
+		err = responder.Encode(ignore)
 		if err != nil {
 			log.Println(err)
 		}
 		return
 	}
-	// you *should* be able to throw any freakin string at this thing and get back a valid command for dispatch()
+	// you *should* be able to throw any string at this thing and get back a valid command for dispatch()
 	// if there are no commad arguments, cmdArgs will be nil
-	cmd, cmdArgs, err := parseCmd(userReq.Data)
+	cmd, cmdArgs, err := pl.sc.sanitizeUserInput(ctx)
 	if err != nil {
 		log.Println(err)
 	}
+
 	// the tofu and potatoes right here y'all
-	response, err := dispatch(pl, cmd, cmdArgs, strconv.Itoa(userReq.Message.SenderID), userReq.Message.SenderEmail, userReq.Message.SenderFullName)
+	userData := pl.sc.extractUserData(ctx)
+
+	response, err := dispatch(pl, cmd, cmdArgs, userData.userID, userData.userEmail, userData.userName)
 	if err != nil {
 		log.Println(err)
 	}
+
 	err = responder.Encode(botResponse{response})
 	if err != nil {
 		log.Println(err)

@@ -70,6 +70,7 @@ type RecurserDB interface {
 	UnsetSkippingTomorrow(ctx context.Context, recurser Recurser) error
 }
 
+// implements RecurserDB
 type FirestoreRecurserDB struct {
 	client *firestore.Client
 }
@@ -204,6 +205,7 @@ func (f *FirestoreRecurserDB) UnsetSkippingTomorrow(ctx context.Context, recurse
 	return nil
 }
 
+// implements RecurserDB
 type MockRecurserDB struct{}
 
 func (m *MockRecurserDB) GetByUserID(ctx context.Context, userID, userEmail, userName string) (Recurser, error) {
@@ -240,6 +242,7 @@ type APIAuthDB interface {
 	GetKey(ctx context.Context, col, doc string) (string, error)
 }
 
+// implements APIAuthDB
 type FirestoreAPIAuthDB struct {
 	client *firestore.Client
 }
@@ -255,6 +258,7 @@ func (f *FirestoreAPIAuthDB) GetKey(ctx context.Context, col, doc string) (strin
 	return token["value"].(string), nil
 }
 
+// implements APIAuthDB
 type MockAPIAuthDB struct{}
 
 func (f *MockAPIAuthDB) GetKey(ctx context.Context, col, doc string) (string, error) {
