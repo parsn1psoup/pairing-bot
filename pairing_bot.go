@@ -153,7 +153,7 @@ func (pl *PairingLogic) notifyMatches(ctx context.Context, matches []MatchResult
 	}
 
 	for _, match := range matches {
-		if match.IsAPair() {
+		if match.IsPair() {
 			first, second := match.Pair()
 			emails := first.email + ", " + second.email
 			err := pl.un.sendUserMessage(ctx, botPassword, emails, matchedMessage)

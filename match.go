@@ -6,22 +6,22 @@ import (
 
 // A MatchResult can either be a pair or a single unmatched odd one out
 type MatchResult struct {
-	first Recurser
+	first *Recurser
 
-	// second is none if the match result is not a pair
+	// second is nil if the match result is not a pair
 	second *Recurser
 }
 
-func (r *MatchResult) IsAPair() bool {
+func (r *MatchResult) IsPair() bool {
 	return r.second != nil
 }
 
 func (r *MatchResult) Pair() (Recurser, Recurser) {
-	return r.first, *r.second
+	return *r.first, *r.second
 }
 
 func (r *MatchResult) OddOneOut() Recurser {
-	return r.first
+	return *r.first
 }
 
 func Match(recursers []Recurser) []MatchResult {
@@ -40,14 +40,14 @@ func Match(recursers []Recurser) []MatchResult {
 	// put them in an odd one out "match", and then knock them off the list
 	if len(recursers)%2 != 0 {
 		matches = append(matches, MatchResult{
-			first: recursers[len(recursers)-1],
+			first: &recursers[len(recursers)-1],
 		})
 		recursers = recursers[:len(recursers)-1]
 	}
 
 	for i := 0; i < len(recursers); i += 2 {
 		matches = append(matches, MatchResult{
-			first:  recursers[i],
+			first:  &recursers[i],
 			second: &recursers[i+1],
 		})
 	}
