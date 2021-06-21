@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -114,10 +115,21 @@ func (pl *PairingLogic) match(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	recursersList, err := pl.rdb.ListPairingTomorrow(ctx)
+	recursers, err := pl.rdb.ListPairingTomorrow(ctx)
 	if err != nil {
 		log.Printf("Could not get list of recursers from DB: %s\n", err)
 	}
+
+	matches := Match(recursers)
+	// TODO do we want to return in case of errors here?
+
+	pl.notifyMatches(ctx, matches)
+
+	pl.resetSkippers(ctx)
+
+}
+
+func (pl *PairingLogic) resetSkippers(ctx context.Context) {
 
 	skippersList, err := pl.rdb.ListSkippingTomorrow(ctx)
 	if err != nil {
@@ -131,44 +143,33 @@ func (pl *PairingLogic) match(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Could not unset skipping for recurser %v: %s\n", skipper.id, err)
 		}
 	}
+}
 
-	// shuffle our recursers. This will not error if the list is empty
-	randSrc.Shuffle(len(recursersList), func(i, j int) { recursersList[i] = recursersList[j] })
-
-	// if for some reason there's no matches today, we're done
-	if len(recursersList) == 0 {
-		log.Println("No one was signed up to pair today -- so there were no matches")
-		return
-	}
-
+func (pl *PairingLogic) notifyMatches(ctx context.Context, matches []MatchResult) {
 	// message the peeps!
 	botPassword, err := pl.adb.GetKey(ctx, "apiauth", "key")
 	if err != nil {
 		log.Println("Something weird happened trying to read the auth token from the database")
 	}
 
-	// if there's an odd number today, message the last person in the list
-	// and tell them they don't get a match today, then knock them off the list
-	if len(recursersList)%2 != 0 {
-		recurser := recursersList[len(recursersList)-1]
-		recursersList = recursersList[:len(recursersList)-1]
-		log.Println("Someone was the odd-one-out today")
+	for _, match := range matches {
+		if match.IsAPair() {
+			first, second := match.Pair()
+			emails := first.email + ", " + second.email
+			err := pl.un.sendUserMessage(ctx, botPassword, emails, matchedMessage)
+			if err != nil {
+				log.Printf("Error when trying to send matchedMessage to %s: %s\n", emails, err)
+			}
+			log.Println(first.email, "was", "matched", "with", second.email)
+		} else {
+			// if there's an odd number today, message the odd person and tell them they didn't get a match
+			log.Println("Someone was the odd-one-out today")
 
-		err := pl.un.sendUserMessage(ctx, botPassword, recurser.email, oddOneOutMessage)
-		if err != nil {
-			log.Printf("Error when trying to send oddOneOut message to %s: %s\n", recurser.email, err)
+			err := pl.un.sendUserMessage(ctx, botPassword, match.OddOneOut().email, oddOneOutMessage)
+			if err != nil {
+				log.Printf("Error when trying to send oddOneOut message to %s: %s\n", match.OddOneOut().email, err)
+			}
 		}
-
-	}
-
-	for i := 0; i < len(recursersList); i += 2 {
-
-		emails := recursersList[i].email + ", " + recursersList[i+1].email
-		err := pl.un.sendUserMessage(ctx, botPassword, emails, matchedMessage)
-		if err != nil {
-			log.Printf("Error when trying to send matchedMessage to %s: %s\n", emails, err)
-		}
-		log.Println(recursersList[i].email, "was", "matched", "with", recursersList[i+1].email)
 	}
 }
 
