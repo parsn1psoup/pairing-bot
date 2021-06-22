@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"math/rand"
 	"strings"
 	"time"
 
@@ -221,7 +222,10 @@ func (f *FirestoreRecurserDB) UnsetSkippingTomorrow(ctx context.Context, recurse
 }
 
 // implements RecurserDB
-type MockRecurserDB struct{}
+type MockRecurserDB struct {
+	lenListSkippingTomorrow     int
+	unsetSkippingTomorrowCalled int
+}
 
 func (m *MockRecurserDB) GetByUserID(ctx context.Context, userID, userEmail, userName string) (Recurser, error) {
 	return Recurser{}, nil
@@ -244,10 +248,23 @@ func (m *MockRecurserDB) ListPairingTomorrow(ctx context.Context) ([]Recurser, e
 }
 
 func (m *MockRecurserDB) ListSkippingTomorrow(ctx context.Context) ([]Recurser, error) {
-	return nil, nil
+	// generate skippers list of random length
+	var skippersList []Recurser
+	rand.Seed(time.Now().Unix())
+	min := 0
+	max := 30
+	length := rand.Intn(max-min+1) + min
+
+	for i := 0; i < length; i++ {
+		skippersList = append(skippersList, Recurser{})
+	}
+	m.lenListSkippingTomorrow = length
+
+	return skippersList, nil
 }
 
-func (m *MockRecurserDB) UnsetSkippingTomorrow(ctx context.Context, userID string) error {
+func (m *MockRecurserDB) UnsetSkippingTomorrow(ctx context.Context, recurser Recurser) error {
+	m.unsetSkippingTomorrowCalled++
 	return nil
 }
 

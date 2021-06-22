@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 var tableIsPair = []struct {
 	testName string
@@ -41,5 +44,40 @@ func TestMatch_Length(t *testing.T) {
 				t.Errorf("got %v, wanted %v\n", got, tt.want)
 			}
 		})
+	}
+}
+
+func setupPairingLogic() *PairingLogic {
+
+	pl := &PairingLogic{
+		rdb: &MockRecurserDB{
+			unsetSkippingTomorrowCalled: 0,
+			lenListSkippingTomorrow:     0,
+		},
+		adb: &MockAPIAuthDB{},
+		ur:  &mockUserRequest{},
+		un:  &mockUserNotification{},
+	}
+
+	return pl
+}
+
+// TestMatch_ResetSkippers checks whether for a skippersList with n items produced by ListSkippingTomorrow,
+// UnsetSkippingTomorrow is called n times
+func TestMatch_ResetSkippers(t *testing.T) {
+	pl := setupPairingLogic()
+	ctx := context.Background()
+
+	pl.resetSkippers(ctx)
+
+	// use type assertion so struct fields can be accessed
+	mrdb, ok := pl.rdb.(*MockRecurserDB)
+	if !ok {
+		t.Error("Failed type assertion\n")
+	}
+	numSkippers := mrdb.lenListSkippingTomorrow
+	numUnset := mrdb.unsetSkippingTomorrowCalled
+	if numSkippers != numUnset {
+		t.Errorf("TestMatch_ResetSkippers: numSkippers is %v, numUnset is %v\n", numSkippers, numUnset)
 	}
 }
