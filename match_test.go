@@ -21,3 +21,25 @@ func TestMatchResult_IsPair(t *testing.T) {
 		})
 	}
 }
+
+// TODO more test cases?
+var tableMatch = []struct {
+	testName string
+	input    []Recurser
+	want     int
+}{
+	{"empty_list", nil, 0}, // the length of a nil slice is 0
+	{"single_recurser", []Recurser{{email: "test@you.com"}}, 1},
+	{"two_recursers", []Recurser{{email: "test@you.com"}, {email: "me@moon.com"}}, 1},
+}
+
+func TestMatch_Length(t *testing.T) {
+	for _, tt := range tableMatch {
+		t.Run(tt.testName, func(t *testing.T) {
+			got := len(Match(tt.input))
+			if got != tt.want {
+				t.Errorf("got %v, wanted %v\n", got, tt.want)
+			}
+		})
+	}
+}
