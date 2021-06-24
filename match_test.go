@@ -47,6 +47,12 @@ func TestMatch_Length(t *testing.T) {
 	}
 }
 
+// 1. everyone in input is in output exactly once
+// 2. 0 or 1 odd one out
+func TestMatch(t *testing.T) {
+
+}
+
 func setupPairingLogic() *PairingLogic {
 
 	pl := &PairingLogic{
@@ -79,5 +85,37 @@ func TestMatch_ResetSkippers(t *testing.T) {
 	numUnset := mrdb.unsetSkippingTomorrowCalled
 	if numSkippers != numUnset {
 		t.Errorf("TestMatch_ResetSkippers: numSkippers is %v, numUnset is %v\n", numSkippers, numUnset)
+	}
+}
+
+var tableNotify = []struct {
+	testName string
+	input    []MatchResult
+	want     int
+}{
+	{"empty_list", nil, 0}, // the length of a nil slice is 0
+	{"single_match", []MatchResult{{first: &Recurser{email: "test@you.com"}}}, 1},
+	{"two_matches", []MatchResult{{first: &Recurser{email: "test@you.com"}},
+		{first: &Recurser{email: "me@moon.com"}, second: &Recurser{email: "hello@moon.com"}}}, 2},
+}
+
+func TestPairingLogic_notifyMatches(t *testing.T) {
+	for _, tt := range tableNotify {
+		t.Run(tt.testName, func(t *testing.T) {
+			pl := setupPairingLogic()
+			ctx := context.Background()
+
+			notifier, ok := pl.un.(*mockUserNotification)
+			if !ok {
+				t.Error("Failed type assertion\n")
+			}
+
+			pl.notifyMatches(ctx, tt.input)
+
+			got := notifier.sendUserMessageCalled
+			if got != tt.want {
+				t.Errorf("got %v, wanted %v\n", got, tt.want)
+			}
+		})
 	}
 }

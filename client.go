@@ -154,9 +154,11 @@ type mockUserRequest struct {
 
 // implements userNotification
 type mockUserNotification struct {
+	sendUserMessageCalled int
 }
 
 func (mun *mockUserNotification) sendUserMessage(ctx context.Context, botPassword, user, message string) error {
+	mun.sendUserMessageCalled++
 	return nil
 }
 
