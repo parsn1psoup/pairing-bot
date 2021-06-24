@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"math/rand"
 	"strings"
 	"time"
 
@@ -88,19 +89,34 @@ func (f *FirestoreRecurserDB) GetByUserID(ctx context.Context, userID, userEmail
 	// if there's not, they were not subscribed
 	isSubscribed := doc.Exists()
 
+	var r Recurser
 	// if the user is in the database, get their current state into this map
 	// also assign their zulip name to the name field, just in case it changed
 	// also assign their email, for the same reason
-	var recurser map[string]interface{}
-
 	if isSubscribed {
-		recurser = doc.Data()
+		recurser := doc.Data()
 		recurser["name"] = userName
 		recurser["email"] = userEmail
+		r = MapToStruct(recurser)
+	} else {
+		// User is not subscribed, so provide a default recurser struct instead.
+		r = Recurser{
+			id:                 userID,
+			name:               userName,
+			email:              userEmail,
+			isSkippingTomorrow: false,
+			schedule: map[string]interface{}{
+				"monday":    true,
+				"tuesday":   true,
+				"wednesday": true,
+				"thursday":  true,
+				"friday":    true,
+				"saturday":  false,
+				"sunday":    false,
+			},
+		}
 	}
-
 	// now put the data from the recurser map into a Recurser struct
-	r := MapToStruct(recurser)
 	r.isSubscribed = isSubscribed
 	return r, nil
 }
@@ -206,7 +222,10 @@ func (f *FirestoreRecurserDB) UnsetSkippingTomorrow(ctx context.Context, recurse
 }
 
 // implements RecurserDB
-type MockRecurserDB struct{}
+type MockRecurserDB struct {
+	lenListSkippingTomorrow     int
+	unsetSkippingTomorrowCalled int
+}
 
 func (m *MockRecurserDB) GetByUserID(ctx context.Context, userID, userEmail, userName string) (Recurser, error) {
 	return Recurser{}, nil
@@ -229,10 +248,23 @@ func (m *MockRecurserDB) ListPairingTomorrow(ctx context.Context) ([]Recurser, e
 }
 
 func (m *MockRecurserDB) ListSkippingTomorrow(ctx context.Context) ([]Recurser, error) {
-	return nil, nil
+	// generate skippers list of random length
+	var skippersList []Recurser
+	rand.Seed(time.Now().Unix())
+	min := 0
+	max := 30
+	length := rand.Intn(max-min+1) + min
+
+	for i := 0; i < length; i++ {
+		skippersList = append(skippersList, Recurser{})
+	}
+	m.lenListSkippingTomorrow = length
+
+	return skippersList, nil
 }
 
-func (m *MockRecurserDB) UnsetSkippingTomorrow(ctx context.Context, userID string) error {
+func (m *MockRecurserDB) UnsetSkippingTomorrow(ctx context.Context, recurser Recurser) error {
+	m.unsetSkippingTomorrowCalled++
 	return nil
 }
 
